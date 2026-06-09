@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "bulid",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "python -m PyInstaller screen_audio_recorder.spec --noconfirm && echo === BUILD SUCCESS === || echo === BUILD FAILED ===",
+    "timeout": 0
+  },
+  "workspaceFolderName": "work-type-0",
+  "shortName": "bulid"
+}

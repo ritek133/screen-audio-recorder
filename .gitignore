@@ -1,0 +1,30 @@
+# Build artifacts
+build/
+dist/
+_internal/
+*.exe
+*.pyz
+*.pkg
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Test frameworks
+.hypothesis/
+.pytest_cache/
+
+# Test output logs
+test_output.txt
+test_ve_output.txt
+test_rc_output.txt
+
+# IDE / Kiro temp
+.kiro_tmp/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
