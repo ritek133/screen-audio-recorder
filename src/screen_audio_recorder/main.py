@@ -79,6 +79,11 @@ def _ensure_data_dirs() -> None:
         (base / subdir).mkdir(parents=True, exist_ok=True)
 
 
+# 自動更新用リポジトリ設定
+_REPO_OWNER = "taicheng-huang"
+_REPO_NAME = "screen-audio-recorder"
+
+
 def main() -> None:
     """アプリケーションのメインエントリーポイント.
 
@@ -197,6 +202,20 @@ def main() -> None:
         text_post_processor=text_post_processor,
     )
 
+    # Updater の初期化
+    from screen_audio_recorder.updater import Updater
+    import screen_audio_recorder
+
+    updater = Updater(
+        repo_owner=_REPO_OWNER,
+        repo_name=_REPO_NAME,
+        current_version=screen_audio_recorder.__version__,
+        exe_path=Path(sys.executable),
+    )
+
+    # 起動時バックアップクリーンアップ
+    updater.cleanup_old_backups()
+
     # MainWindow を初期化
     main_window = MainWindow(
         root=root,
@@ -204,6 +223,7 @@ def main() -> None:
         memo_store=memo_store,
         audio_capture=audio_capture,
         on_llm_settings_changed=on_llm_settings_changed,
+        updater=updater,
     )
 
     logger.info("アプリケーションの初期化が完了しました。")

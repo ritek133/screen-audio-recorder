@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "screen-audio-recorder"
@@ -13,9 +13,9 @@ license = {text = "Proprietary"}
 requires-python = ">=3.10"
 dependencies = [
     "dxcam==0.0.5",
-    "PyAudioWPatch==0.2.12.6",
+    "PyAudioWPatch>=0.2.12.6",
     "ffmpeg-python==0.2.0",
-    "faster-whisper==1.0.3",
+    "faster-whisper>=1.0.3",
     "janome==0.5.0",
     "filelock==3.16.1",
     "numpy>=1.24.0",

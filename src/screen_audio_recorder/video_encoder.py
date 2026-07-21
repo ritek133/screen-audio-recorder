@@ -221,6 +221,15 @@ class VideoEncoder:
         # libx264 は幅・高さが2の倍数でないとエラーになるため丸める
         width = width & ~1
         height = height & ~1
+
+        # 最小解像度チェック: ffmpeg が処理できない極小サイズを拒否
+        if width < 2 or height < 2:
+            raise ValueError(
+                f"映像解像度が無効です: {width}x{height} "
+                f"(元: {resolution[0]}x{resolution[1]})。"
+                "録画領域が画面外にある可能性があります。"
+            )
+
         self._resolution = (width, height)
 
         if mode == RecordingMode.SCREEN_AND_AUDIO:

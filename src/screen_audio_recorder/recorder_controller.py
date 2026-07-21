@@ -166,6 +166,25 @@ class RecorderController:
                 break
             time.sleep(0.1)
 
+        # 解像度バリデーション: 幅または高さが2未満の場合は録画不可
+        # （DPI スケーリングでウィンドウ座標が画面外に出ている場合に発生しうる）
+        width, height = resolution
+        if (width & ~1) < 2 or (height & ~1) < 2:
+            logger.error(
+                "録画解像度が無効です: %dx%d。録画領域が画面外の可能性があります。"
+                "録画を中断します。",
+                width, height,
+            )
+            self._screen_capture.stop()
+            if self._error_notifier:
+                self._error_notifier.notify(
+                    "録画エラー",
+                    f"録画領域のサイズが無効です ({width}x{height})。\n"
+                    "ウィンドウが画面外に移動している可能性があります。\n"
+                    "録画領域を再選択してください。",
+                )
+            return
+
         # 2. VideoEncoder を起動（映像のみ、音声は後で WAV に直接書き込み）
         self._video_encoder.start(
             output_path=self._current_output_path,

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from screen_audio_recorder.audio_capture import AudioCapture
     from screen_audio_recorder.memo_store import MemoStore
     from screen_audio_recorder.recorder_controller import RecorderController
+    from screen_audio_recorder.updater import Updater
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class MainWindow:
         memo_store: MemoStore,
         audio_capture: AudioCapture,
         on_llm_settings_changed: callable | None = None,
+        updater: "Updater | None" = None,
     ) -> None:
         """MainWindow を初期化する.
 
@@ -56,12 +58,14 @@ class MainWindow:
             memo_store: メモストア
             audio_capture: 音声キャプチャ（マイクデバイス一覧取得に使用）
             on_llm_settings_changed: LLM 設定変更時のコールバック
+            updater: Updater インスタンス（None の場合は更新機能無効）
         """
         self._root = root
         self._recorder_controller = recorder_controller
         self._memo_store = memo_store
         self._audio_capture = audio_capture
         self._on_llm_settings_changed = on_llm_settings_changed
+        self._updater = updater
 
         self._root.title("Screen Audio Recorder")
         self._root.resizable(True, True)
@@ -95,6 +99,9 @@ class MainWindow:
         self._mode_var.trace_add("write", self._on_mode_changed)
         # 初期表示
         self._on_mode_changed()
+
+        # WM_DELETE_WINDOW ハンドラを設定（ダウンロード中の終了確認）
+        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------------
     # UI 構築
@@ -207,7 +214,11 @@ class MainWindow:
         # --- バージョン情報タブ ---
         from screen_audio_recorder.gui.about_tab import AboutTab
 
-        self._about_tab = AboutTab(self._notebook)
+        self._about_tab = AboutTab(
+            self._notebook,
+            updater=self._updater,
+            is_recording=lambda: self._recorder_controller.is_recording,
+        )
         self._notebook.add(self._about_tab.frame, text="このアプリについて")
 
     def _on_llm_settings_changed_internal(self, settings: LlmSettings) -> None:
@@ -330,3 +341,19 @@ class MainWindow:
         self._memo_list_view.refresh()
         self._status_var.set("停止中")
         logger.info("メモ一覧を更新しました。")
+
+    def _on_close(self) -> None:
+        """ウィンドウ閉じボタンのハンドラ.
+
+        ダウンロード中の場合は確認ダイアログを表示する。
+        Validates: Requirements 3.13
+        """
+        if self._updater is not None and self._updater._is_downloading:
+            result = messagebox.askyesno(
+                "終了確認",
+                "ダウンロード中です。終了してもよろしいですか？",
+            )
+            if not result:
+                return
+            self._updater.cancel_download()
+        self._root.destroy()

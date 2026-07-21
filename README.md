@@ -19,7 +19,8 @@ screen-audio-recorder/
 │       │   ├── region_overlay.py     # 録画領域オーバーレイ（赤枠・ドラッグ・リサイズ）
 │       │   ├── llm_settings_tab.py   # LLM 設定タブ（モデル選択・API 設定・プロンプト編集）
 │       │   ├── advanced_settings_tab.py  # 詳細設定タブ（ログレベル等）
-│       │   └── about_tab.py         # バージョン情報タブ
+│       │   ├── about_tab.py         # バージョン情報タブ（更新確認・ロールバック）
+│       │   └── update_progress_dialog.py  # 更新ダウンロード進捗ダイアログ
 │       ├── __init__.py               # パッケージメタデータ（バージョン・作者情報）
 │       ├── main.py                   # エントリーポイント（初期化・コンポーネント結合）
 │       ├── recorder_controller.py    # 録画パイプライン制御（開始・停止・スレッド管理）
@@ -34,6 +35,8 @@ screen-audio-recorder/
 │       ├── file_store.py             # 録画ファイル管理（保存パス生成・削除）
 │       ├── error_notifier.py         # エラー通知（GUI ダイアログ表示）
 │       ├── models.py                 # データモデル定義（dataclass）
+│       ├── updater.py                # 自動更新モジュール（GitHub Releases 連携）
+│       ├── updater_models.py         # 更新機能のデータモデル定義
 │       ├── app_settings_store.py     # アプリ設定の読み書き
 │       └── llm_settings_store.py     # LLM 設定の読み書き
 │
@@ -49,7 +52,10 @@ screen-audio-recorder/
 │   ├── test_file_store.py            # FileStore のテスト
 │   ├── test_models.py                # データモデルのテスト
 │   ├── test_theme_generator.py       # ThemeGenerator のテスト
-│   └── test_error_notifier.py        # ErrorNotifier のテスト
+│   ├── test_error_notifier.py        # ErrorNotifier のテスト
+│   ├── test_updater.py               # Updater（自動更新）のテスト
+│   ├── test_about_tab.py             # AboutTab（更新UI）のテスト
+│   └── test_update_progress_dialog.py  # UpdateProgressDialog のテスト
 │
 ├── scripts/                      # ユーティリティスクリプト
 │   ├── download_ffmpeg.py            # ffmpeg バイナリのダウンロード
@@ -108,36 +114,43 @@ screen-audio-recorder/
 
 ### 手順
 
-```bash
+```powershell
 # 1. リポジトリのクローン
 git clone <リポジトリURL>
 cd work-type-0
 
-# 2. 依存ライブラリのインストール
+# 2. 仮想環境の作成と有効化
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 3. 依存ライブラリのインストール（編集可能モード）
 pip install -e ".[dev]"
 
-# 3. 外部バイナリのダウンロード
+# 4. 外部バイナリのダウンロード
 python scripts/download_ffmpeg.py        # _internal/ffmpeg.exe を取得（約80MB）
 python scripts/download_llama_server.py  # _internal/llama-server.exe を取得
 
-# 4. アプリ起動
+# 5. アプリ起動
 python -m screen_audio_recorder.main
 
-# 5. テスト実行
+# 6. テスト実行
 pytest
 ```
 
 ### 補足
 
+- **仮想環境**: `.venv` に作成され `.gitignore` に含まれています。仮想環境が有効化されていない場合はフルパスで実行してください: `.\.venv\Scripts\python.exe -m screen_audio_recorder.main`
 - **faster-whisper モデル**: 初回の文字起こし実行時に `~/Documents/screen-audio-recorder/models/` へ自動ダウンロードされます（large モデル: 約3GB）
 - **llama-server**: LLM テキスト後処理機能を使う場合に必要です。使わない場合はスキップ可能
-- **配布用 exe の再ビルド**: `pyinstaller screen_audio_recorder.spec` で `dist/` に出力されます
 
 ---
 
 ## セットアップ（開発環境・既存）
 
-```bash
+```powershell
+# 仮想環境の有効化
+.\.venv\Scripts\Activate.ps1
+
 # 依存関係のインストール
 pip install -e ".[dev]"
 
@@ -150,13 +163,66 @@ python -m screen_audio_recorder.main
 
 ## ビルド（配布用 exe）
 
-python -m PyInstaller screen_audio_recorder.spec --noconfirm
+```powershell
+# 仮想環境の有効化
+.\.venv\Scripts\Activate.ps1
 
-```bash
-pyinstaller screen_audio_recorder.spec
+# PyInstaller のインストール（初回のみ）
+pip install pyinstaller
+
+# ビルド実行
+pyinstaller screen_audio_recorder.spec --noconfirm
 ```
 
+> **注**: PowerShell で `.\.venv\Scripts\` のパスが認識されない場合はフルパスで実行:
+> ```powershell
+> & "C:\Users\user2\Dropbox\huangシステム設計書\APP開発\work-type-0\.venv\Scripts\pyinstaller.exe" screen_audio_recorder.spec --noconfirm
+> ```
+
 ビルド成果物は `dist/screen-audio-recorder/` に出力されます。
+
+---
+
+## リリース手順
+
+### アセット命名規則
+
+GitHub Releases にアセットをアップロードする際は、以下の命名規則に従ってください:
+
+| 更新種別 | ファイル名パターン | 例 |
+|---------|-------------------|-----|
+| 通常更新（exe 単体） | `screen-audio-recorder-vX.Y.Z.exe` | `screen-audio-recorder-v0.2.0.exe` |
+| フル更新（zip） | `screen-audio-recorder-vX.Y.Z-full.zip` | `screen-audio-recorder-v0.2.0-full.zip` |
+
+### zip ファイルの構造
+
+フル更新用の zip は以下の構造である必要があります（ルート直下に exe と `_internal` が並ぶ）:
+
+```
+screen-audio-recorder-v0.2.0-full.zip
+├── screen-audio-recorder.exe
+└── _internal/
+    └── ...
+```
+
+### リリースフロー
+
+1. `src/screen_audio_recorder/__init__.py` の `__version__` を更新する
+2. `pyproject.toml` の `version` を同じ値に更新する
+3. コミット & タグ作成: `git tag v0.2.0`
+4. `pyinstaller screen_audio_recorder.spec --noconfirm` でビルド
+5. `dist/screen-audio-recorder/` の内容を zip に圧縮（フル更新の場合）
+6. GitHub Releases で新しいリリースを作成:
+   - タグ: `v0.2.0` （"v" プレフィックス必須）
+   - アセット: exe ファイル、必要に応じて zip ファイル
+   - リリースノート: 変更内容を記載
+7. プレリリースにはしない（プレリリースタグは自動更新の対象外）
+
+### 更新判定ロジック
+
+- zip アセット（`*-full.zip`）が存在する場合: **フル更新** として処理
+- exe アセットのみ存在する場合: **通常更新** として処理
+- 両方存在する場合: zip（フル更新）が優先される
 
 ---
 

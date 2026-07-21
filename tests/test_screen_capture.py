@@ -193,6 +193,8 @@ class TestStartStopWithDxcam:
         fake_frame = make_fake_frame()
         mock_camera = MagicMock()
         mock_camera.grab.return_value = fake_frame
+        mock_camera.width = 1920
+        mock_camera.height = 1080
 
         with patch("screen_audio_recorder.screen_capture.dxcam") as mock_dxcam:
             mock_dxcam.create.return_value = mock_camera
@@ -209,6 +211,8 @@ class TestStartStopWithDxcam:
 
         mock_camera = MagicMock()
         mock_camera.grab.return_value = make_fake_frame()
+        mock_camera.width = 1920
+        mock_camera.height = 1080
 
         with patch("screen_audio_recorder.screen_capture.dxcam") as mock_dxcam:
             mock_dxcam.create.return_value = mock_camera
@@ -225,6 +229,8 @@ class TestStartStopWithDxcam:
         fake_frame = make_fake_frame()
         mock_camera = MagicMock()
         mock_camera.grab.return_value = fake_frame
+        mock_camera.width = 1920
+        mock_camera.height = 1080
 
         with patch("screen_audio_recorder.screen_capture.dxcam") as mock_dxcam:
             mock_dxcam.create.return_value = mock_camera
