@@ -423,13 +423,14 @@ class ScreenCapture:
         - 録画開始時に録画領域の中心が属するモニタを判定
         - そのモニタの output_idx で dxcam インスタンスを作成
         - 仮想デスクトップ座標をモニタローカル座標に変換して grab() に渡す
+        - dxcam のシングルトンキャッシュを事前にクリアし、正しいモニタを取得する
         """
         camera = None
+        target_monitor: MonitorInfo | None = None
         try:
             region = self._get_current_region()
 
             # 録画領域からターゲットモニタを判定
-            target_monitor: MonitorInfo | None = None
             if region is not None and self._monitors:
                 target_monitor = _find_monitor_for_region(region, self._monitors)
 
@@ -440,13 +441,22 @@ class ScreenCapture:
                     target_monitor.left, target_monitor.top,
                     target_monitor.width, target_monitor.height,
                 )
+                # dxcam シングルトンキャッシュを全クリアして確実に新しいインスタンスを取得
+                try:
+                    factory = getattr(dxcam, "_DXFactory__factory", None) or getattr(dxcam, "__factory", None)
+                    if factory is not None and hasattr(factory, "_camera_instances"):
+                        factory._camera_instances.clear()
+                except Exception:
+                    pass
+
                 camera = dxcam.create(
                     device_idx=target_monitor.device_idx,
                     output_idx=target_monitor.output_idx,
                     output_color="BGR",
                 )
-                display_width = target_monitor.width
-                display_height = target_monitor.height
+                # dxcam が報告する実際の解像度を使用（MonitorInfo のサイズよりこちらが正確）
+                display_width = camera.width
+                display_height = camera.height
             else:
                 # モニタ情報が取れない場合はデフォルト（プライマリモニタ）
                 logger.info("モニタ情報なし。プライマリモニタでキャプチャします。")
@@ -467,6 +477,17 @@ class ScreenCapture:
                 "dxcam ディスプレイ物理解像度: %dx%d", display_width, display_height
             )
 
+            # MonitorInfo のサイズを dxcam が報告する実際の解像度で上書き
+            # （DPI スケーリング等で差異がある場合に対応）
+            target_monitor = MonitorInfo(
+                device_idx=target_monitor.device_idx,
+                output_idx=target_monitor.output_idx,
+                left=target_monitor.left,
+                top=target_monitor.top,
+                width=display_width,
+                height=display_height,
+            )
+
             while not self._stop_event.is_set():
                 frame_start = time.perf_counter()
 
@@ -479,13 +500,6 @@ class ScreenCapture:
                             frame = camera.grab(region=local_rect)
                         else:
                             # 変換失敗（領域がモニタ外）→ モニタ全体をキャプチャ
-                            logger.warning(
-                                "録画領域がモニタ範囲外です: x=%d, y=%d, w=%d, h=%d "
-                                "(モニタ: left=%d, top=%d, %dx%d)",
-                                region.x, region.y, region.width, region.height,
-                                target_monitor.left, target_monitor.top,
-                                target_monitor.width, target_monitor.height,
-                            )
                             frame = camera.grab()
                     else:
                         frame = camera.grab()
@@ -508,16 +522,13 @@ class ScreenCapture:
         finally:
             if camera is not None:
                 try:
-                    # dxcam のシングルトンキャッシュからインスタンスを削除
-                    # これをしないと次回 create() 時に古いインスタンスが返される
-                    if target_monitor is not None:
-                        instance_key = (target_monitor.device_idx, target_monitor.output_idx)
-                        try:
-                            factory = getattr(dxcam, "_DXFactory__factory", None) or getattr(dxcam, "__factory", None)
-                            if factory is not None and hasattr(factory, "_camera_instances"):
-                                factory._camera_instances.pop(instance_key, None)
-                        except Exception:
-                            pass
+                    # dxcam のシングルトンキャッシュから全インスタンスを削除
+                    try:
+                        factory = getattr(dxcam, "_DXFactory__factory", None) or getattr(dxcam, "__factory", None)
+                        if factory is not None and hasattr(factory, "_camera_instances"):
+                            factory._camera_instances.clear()
+                    except Exception:
+                        pass
                     del camera
                 except Exception:
                     pass
