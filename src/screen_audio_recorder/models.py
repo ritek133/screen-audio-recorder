@@ -132,11 +132,27 @@ class RecordingMode(enum.Enum):
     AUDIO_ONLY = "audio_only"
 
 
+class TranscriberBackend(enum.Enum):
+    """文字起こしバックエンドを表す列挙型."""
+
+    LOCAL = "local"           # faster-whisper（ローカル）
+    VLLM = "vllm"            # vLLM OpenAI 互換 API
+    AWS_TRANSCRIBE = "aws_transcribe"  # Amazon Transcribe
+
+
 class LlmBackend(enum.Enum):
     """LLM 推論バックエンドを表す列挙型."""
 
     LOCAL = "local"
     API = "api"
+    AWS_BEDROCK = "aws_bedrock"  # Amazon Bedrock
+
+
+class AwsAuthMethod(enum.Enum):
+    """AWS 認証方式を表す列挙型."""
+
+    PROFILE = "profile"       # boto3 デフォルト（環境変数/プロファイル/IAM ロール）
+    ACCESS_KEY = "access_key"  # アクセスキー直接入力
 
 
 # デフォルトプロンプトテンプレート
@@ -159,11 +175,51 @@ DEFAULT_PROMPT_THEME = (
 
 
 @dataclass
+class AwsSettings:
+    """AWS 接続設定を表すデータクラス.
+
+    Attributes:
+        auth_method: 認証方式（プロファイル or アクセスキー）
+        region: AWS リージョン
+        profile_name: 使用する AWS プロファイル名（auth_method=PROFILE 時）
+        access_key_id: アクセスキー ID（auth_method=ACCESS_KEY 時）
+        secret_access_key: シークレットアクセスキー（auth_method=ACCESS_KEY 時）
+        session_token: セッショントークン（オプション、STS 一時認証用）
+    """
+
+    auth_method: AwsAuthMethod = AwsAuthMethod.PROFILE
+    region: str = "ap-northeast-1"
+    profile_name: str = ""
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    session_token: str = ""
+
+
+@dataclass
+class TranscriberSettings:
+    """文字起こし設定を表すデータクラス.
+
+    Attributes:
+        backend: 文字起こしバックエンド
+        whisper_model_size: ローカル Whisper モデルサイズ（tiny/base/small/medium/large）
+        vllm_endpoint: vLLM サーバーの URL（例: http://host:8000/v1/audio/transcriptions）
+        vllm_model_name: vLLM サーバーで使用するモデル名
+        aws_transcribe_language: Amazon Transcribe の言語コード
+    """
+
+    backend: TranscriberBackend = TranscriberBackend.LOCAL
+    whisper_model_size: str = "small"
+    vllm_endpoint: str = ""
+    vllm_model_name: str = "whisper-large-v3"
+    aws_transcribe_language: str = "ja-JP"
+
+
+@dataclass
 class LlmSettings:
     """LLM 設定を表すデータクラス.
 
     Attributes:
-        backend: 推論バックエンド（LOCAL or API）
+        backend: 推論バックエンド（LOCAL / API / AWS_BEDROCK）
         local_model_path: ローカル GGUF モデルのファイルパス
         api_endpoint: OpenAI 互換 API のエンドポイント URL
         api_key: API キー（オプション、空文字列で省略可）
@@ -172,7 +228,8 @@ class LlmSettings:
         prompt_theme: テーマ生成プロンプトテンプレート（{text} プレースホルダ）
         max_tokens: 最大生成トークン数
         temperature: 生成温度
-        whisper_model_size: Whisper モデルサイズ（tiny/base/small/medium/large）
+        whisper_model_size: Whisper モデルサイズ（後方互換用、TranscriberSettings に移行予定）
+        bedrock_model_id: Bedrock で使用するモデル ID
     """
 
     backend: LlmBackend = LlmBackend.LOCAL
@@ -187,6 +244,7 @@ class LlmSettings:
     ctx_size: int = 8192
     timeout_seconds: int = 600
     whisper_model_size: str = "small"
+    bedrock_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0"
 
 
 @dataclass

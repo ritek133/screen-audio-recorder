@@ -1,0 +1,258 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Screen Audio Recorder - SaaS 利用リソース
+  Amazon Bedrock（LLM）と Amazon Transcribe（文字起こし）を
+  デスクトップアプリから利用するための IAM リソースを作成する。
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: screen-recorder
+    Description: プロジェクト名（リソース名のプレフィックス）
+
+  CreateAccessKey:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: >
+      IAM ユーザーのアクセスキーを作成するか。
+      true: アクセスキー認証（アプリに直接設定）
+      false: プロファイル/IAM ロール認証を使用
+
+  BedrockModels:
+    Type: CommaDelimitedList
+    Default: "anthropic.claude-3-haiku-20240307-v1:0,anthropic.claude-3-5-sonnet-20241022-v2:0,amazon.nova-micro-v1:0"
+    Description: >
+      アプリから利用を許可する Bedrock モデル ID のリスト。
+      コンマ区切りで指定。
+
+  EnableTranscribe:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Amazon Transcribe の利用を許可するか
+
+  TranscribeS3BucketName:
+    Type: String
+    Default: ""
+    Description: >
+      Transcribe 用の S3 バケット名（既存バケット指定可）。
+      空の場合は新規作成する。音声ファイルの一時保管に使用。
+
+Conditions:
+  ShouldCreateAccessKey: !Equals [!Ref CreateAccessKey, "true"]
+  ShouldEnableTranscribe: !Equals [!Ref EnableTranscribe, "true"]
+  ShouldCreateS3Bucket: !And
+    - !Condition ShouldEnableTranscribe
+    - !Equals [!Ref TranscribeS3BucketName, ""]
+
+Resources:
+  # ============================================================
+  # IAM ユーザー（デスクトップアプリ用）
+  # ============================================================
+  AppUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "${ProjectName}-app-user"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: "Desktop app AWS service access"
+
+  # ============================================================
+  # IAM ポリシー - Amazon Bedrock
+  # ============================================================
+  BedrockPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ProjectName}-bedrock-policy"
+      Users:
+        - !Ref AppUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Bedrock モデルへの推論アクセス
+          - Sid: BedrockInvoke
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              !Split
+                - ","
+                - !Sub
+                  - "${Resources}"
+                  - Resources:
+                      !Join
+                        - ","
+                        - !Split
+                          - ","
+                          - !Sub
+                            - "arn:aws:bedrock:${AWS::Region}::foundation-model/${Model}"
+                            - Model: !Select [0, !Ref BedrockModels]
+          # Converse API アクセス（アプリが使用する API）
+          - Sid: BedrockConverse
+            Effect: Allow
+            Action:
+              - bedrock:Converse
+              - bedrock:ConverseStream
+            Resource: "*"
+          # モデル一覧取得（設定画面で利用可能モデルを表示するため）
+          - Sid: BedrockListModels
+            Effect: Allow
+            Action:
+              - bedrock:ListFoundationModels
+              - bedrock:GetFoundationModel
+            Resource: "*"
+
+  # ============================================================
+  # IAM ポリシー - Amazon Transcribe
+  # ============================================================
+  TranscribePolicy:
+    Type: AWS::IAM::Policy
+    Condition: ShouldEnableTranscribe
+    Properties:
+      PolicyName: !Sub "${ProjectName}-transcribe-policy"
+      Users:
+        - !Ref AppUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Transcribe ストリーミング文字起こし
+          - Sid: TranscribeStreaming
+            Effect: Allow
+            Action:
+              - transcribe:StartStreamTranscription
+              - transcribe:StartStreamTranscriptionWebSocket
+            Resource: "*"
+          # Transcribe バッチ文字起こし（長時間音声用）
+          - Sid: TranscribeBatch
+            Effect: Allow
+            Action:
+              - transcribe:StartTranscriptionJob
+              - transcribe:GetTranscriptionJob
+              - transcribe:ListTranscriptionJobs
+              - transcribe:DeleteTranscriptionJob
+            Resource: !Sub "arn:aws:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/${ProjectName}-*"
+          # S3 アクセス（音声ファイルアップロード・結果取得）
+          - Sid: TranscribeS3Access
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !If
+                - ShouldCreateS3Bucket
+                - !Sub "arn:aws:s3:::${TranscribeAudioBucket}"
+                - !Sub "arn:aws:s3:::${TranscribeS3BucketName}"
+              - !If
+                - ShouldCreateS3Bucket
+                - !Sub "arn:aws:s3:::${TranscribeAudioBucket}/*"
+                - !Sub "arn:aws:s3:::${TranscribeS3BucketName}/*"
+
+  # ============================================================
+  # S3 バケット（Transcribe 音声ファイル一時保管）
+  # ============================================================
+  TranscribeAudioBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldCreateS3Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectName}-transcribe-audio-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          # 音声ファイルは 7 日後に自動削除（一時保管用途）
+          - Id: DeleteTempAudio
+            Status: Enabled
+            ExpirationInDays: 7
+            Prefix: "audio/"
+          # Transcribe 出力結果は 30 日後に自動削除
+          - Id: DeleteTranscribeOutput
+            Status: Enabled
+            ExpirationInDays: 30
+            Prefix: "output/"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================
+  # IAM アクセスキー（オプション）
+  # ============================================================
+  AppUserAccessKey:
+    Type: AWS::IAM::AccessKey
+    Condition: ShouldCreateAccessKey
+    Properties:
+      UserName: !Ref AppUser
+
+  # ============================================================
+  # Secrets Manager（アクセスキーの安全な保管）
+  # ============================================================
+  AppUserSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: ShouldCreateAccessKey
+    Properties:
+      Name: !Sub "${ProjectName}/app-credentials"
+      Description: !Sub "${ProjectName} デスクトップアプリ用 AWS 認証情報"
+      SecretString: !Sub
+        - '{"access_key_id":"${AccessKeyId}","secret_access_key":"${SecretKey}","region":"${AWS::Region}"}'
+        - AccessKeyId: !Ref AppUserAccessKey
+          SecretKey: !GetAtt AppUserAccessKey.SecretAccessKey
+
+Outputs:
+  AppUserArn:
+    Description: アプリ用 IAM ユーザー ARN
+    Value: !GetAtt AppUser.Arn
+
+  AccessKeyId:
+    Description: >
+      アクセスキー ID。アプリの「AWS 設定 → アクセスキー ID」に入力。
+      ※ CreateAccessKey=true の場合のみ出力
+    Condition: ShouldCreateAccessKey
+    Value: !Ref AppUserAccessKey
+
+  SecretAccessKey:
+    Description: >
+      シークレットアクセスキー。アプリの「AWS 設定 → シークレットアクセスキー」に入力。
+      ※ この値はスタック作成時のみ表示されます。紛失した場合は再作成が必要です。
+    Condition: ShouldCreateAccessKey
+    Value: !GetAtt AppUserAccessKey.SecretAccessKey
+
+  SecretArn:
+    Description: Secrets Manager に保管された認証情報の ARN
+    Condition: ShouldCreateAccessKey
+    Value: !Ref AppUserSecret
+
+  TranscribeS3Bucket:
+    Description: Transcribe 用 S3 バケット名
+    Condition: ShouldCreateS3Bucket
+    Value: !Ref TranscribeAudioBucket
+
+  AppConfigSummary:
+    Description: アプリ設定サマリー
+    Value: !Sub |
+      === アプリへの設定方法 ===
+      【Bedrock 利用】
+        - バックエンド: AWS Bedrock
+        - リージョン: ${AWS::Region}
+        - 認証: アクセスキー or プロファイル
+      【Transcribe 利用】
+        - バックエンド: AWS Transcribe
+        - リージョン: ${AWS::Region}
+        - 言語: ja-JP

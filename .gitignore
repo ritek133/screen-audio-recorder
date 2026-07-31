@@ -12,6 +12,9 @@ __pycache__/
 *$py.class
 *.so
 
+# Virtual environment
+.venv/
+
 # Test frameworks
 .hypothesis/
 .pytest_cache/
@@ -23,8 +26,13 @@ test_rc_output.txt
 
 # IDE / Kiro temp
 .kiro_tmp/
+.vscode/
 
 # OS files
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Infra secrets
+infra/**/.env
+*.env

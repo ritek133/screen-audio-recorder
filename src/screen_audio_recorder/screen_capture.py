@@ -77,52 +77,84 @@ class MonitorInfo:
 
 
 def _enumerate_monitors() -> list[MonitorInfo]:
-    """Windows API を使用して全モニタの情報を列挙する.
+    """dxcam のファクトリから各出力のデスクトップ座標を取得してモニタ情報を構築する.
 
-    EnumDisplayMonitors を使用し、各モニタの仮想デスクトップ座標と
-    物理解像度を取得する。dxcam の output_idx はモニタの列挙順に対応する。
+    dxcam の output オブジェクトは desc.DesktopCoordinates に
+    仮想デスクトップ上の座標を持っているため、これを使用することで
+    win32api.EnumDisplayMonitors との列挙順の不一致問題を回避する。
 
     Returns:
         MonitorInfo のリスト。取得に失敗した場合は空リスト。
     """
     monitors: list[MonitorInfo] = []
 
+    # 方法1: dxcam のファクトリから直接取得（最も正確）
+    if dxcam is not None:
+        try:
+            factory = getattr(dxcam, "_DXFactory__factory", None) or getattr(dxcam, "__factory", None)
+            if factory is not None and hasattr(factory, "outputs"):
+                for didx, device_outputs in enumerate(factory.outputs):
+                    for oidx, output in enumerate(device_outputs):
+                        try:
+                            output.update_desc()
+                            desc = output.desc
+                            coords = desc.DesktopCoordinates
+                            left = coords.left
+                            top = coords.top
+                            width = coords.right - coords.left
+                            height = coords.bottom - coords.top
+                            if width > 0 and height > 0:
+                                monitors.append(MonitorInfo(
+                                    device_idx=didx,
+                                    output_idx=oidx,
+                                    left=left,
+                                    top=top,
+                                    width=width,
+                                    height=height,
+                                ))
+                        except Exception:
+                            logger.debug(
+                                "dxcam output[%d][%d] の座標取得に失敗", didx, oidx
+                            )
+                if monitors:
+                    logger.debug("dxcam から検出されたモニタ数: %d", len(monitors))
+                    for m in monitors:
+                        logger.debug(
+                            "  モニタ device=%d output=%d: (%d, %d) %dx%d",
+                            m.device_idx, m.output_idx, m.left, m.top, m.width, m.height,
+                        )
+                    return monitors
+        except Exception:
+            logger.exception("dxcam ファクトリからのモニタ情報取得に失敗しました。")
+
+    # 方法2: win32api フォールバック（dxcam が使えない場合、output_idx=列挙順と仮定）
     if win32api is not None:
         try:
-            # win32api.EnumDisplayMonitors で全モニタを列挙
             raw_monitors = win32api.EnumDisplayMonitors(None, None)
             for idx, (hMonitor, _hdcMonitor, _rect) in enumerate(raw_monitors):
                 info = win32api.GetMonitorInfo(hMonitor)
-                # info["Monitor"] は (left, top, right, bottom) タプル
                 left, top, right, bottom = info["Monitor"]
                 width = right - left
                 height = bottom - top
                 if width > 0 and height > 0:
                     monitors.append(MonitorInfo(
-                        device_idx=0,  # 通常単一 GPU; 複数 GPU の場合は拡張が必要
+                        device_idx=0,
                         output_idx=idx,
                         left=left,
                         top=top,
                         width=width,
                         height=height,
                     ))
-            logger.debug("検出されたモニタ数: %d", len(monitors))
-            for m in monitors:
-                logger.debug(
-                    "  モニタ output_idx=%d: (%d, %d) %dx%d",
-                    m.output_idx, m.left, m.top, m.width, m.height,
-                )
+            logger.debug("win32api から検出されたモニタ数: %d", len(monitors))
         except Exception:
-            logger.exception("モニタ情報の列挙中にエラーが発生しました。")
+            logger.exception("win32api によるモニタ列挙中にエラーが発生しました。")
     elif ctypes is not None:
         # win32api がない場合は ctypes でフォールバック
         try:
             user32 = ctypes.windll.user32
 
-            MONITORINFO_SIZE = 40  # MONITORINFO 構造体のサイズ
             monitors_raw: list[tuple[int, int, int, int]] = []
 
-            # EnumDisplayMonitors のコールバック
             MONITORENUMPROC = ctypes.WINFUNCTYPE(
                 ctypes.c_int,
                 ctypes.c_void_p,
@@ -151,7 +183,7 @@ def _enumerate_monitors() -> list[MonitorInfo]:
                         width=width,
                         height=height,
                     ))
-            logger.debug("検出されたモニタ数 (ctypes): %d", len(monitors))
+            logger.debug("ctypes から検出されたモニタ数: %d", len(monitors))
         except Exception:
             logger.exception("ctypes によるモニタ列挙中にエラーが発生しました。")
 
@@ -419,74 +451,86 @@ class ScreenCapture:
     def _capture_worker_dxcam(self) -> None:
         """dxcam を使用して指定領域をキャプチャするワーカー.
 
-        マルチモニタ対応:
-        - 録画開始時に録画領域の中心が属するモニタを判定
-        - そのモニタの output_idx で dxcam インスタンスを作成
-        - 仮想デスクトップ座標をモニタローカル座標に変換して grab() に渡す
-        - dxcam のシングルトンキャッシュを事前にクリアし、正しいモニタを取得する
+        dxcam 0.0.5 はマルチモニタでの output_idx 指定が信頼できないため、
+        常に device_idx=0, output_idx=None（プライマリモニタ）で作成し、
+        録画領域がプライマリモニタ外の場合は mss にフォールバックする。
         """
         camera = None
         target_monitor: MonitorInfo | None = None
+        use_mss_fallback = False
+
         try:
             region = self._get_current_region()
 
-            # 録画領域からターゲットモニタを判定
-            if region is not None and self._monitors:
-                target_monitor = _find_monitor_for_region(region, self._monitors)
+            # dxcam シングルトンキャッシュをクリア
+            try:
+                factory = getattr(dxcam, "_DXFactory__factory", None) or getattr(dxcam, "__factory", None)
+                if factory is not None and hasattr(factory, "_camera_instances"):
+                    factory._camera_instances.clear()
+            except Exception:
+                pass
 
-            if target_monitor is not None:
-                logger.info(
-                    "ターゲットモニタ: output_idx=%d, 位置=(%d, %d), サイズ=%dx%d",
-                    target_monitor.output_idx,
-                    target_monitor.left, target_monitor.top,
-                    target_monitor.width, target_monitor.height,
+            # dxcam は常にプライマリモニタで作成
+            camera = dxcam.create(output_color="BGR")
+            primary_width = camera.width
+            primary_height = camera.height
+
+            # プライマリモニタの座標を特定
+            primary_monitor = None
+            if self._monitors:
+                # dxcam の解像度と一致するモニタを探す
+                for m in self._monitors:
+                    if m.width == primary_width and m.height == primary_height:
+                        primary_monitor = m
+                        break
+                # 解像度が一致するモニタがない場合、位置(0,0)のモニタを優先
+                if primary_monitor is None:
+                    for m in self._monitors:
+                        if m.left == 0 and m.top == 0:
+                            primary_monitor = m
+                            break
+
+            if primary_monitor is None:
+                # フォールバック: (0,0) 起点のプライマリモニタとして扱う
+                primary_monitor = MonitorInfo(
+                    device_idx=0,
+                    output_idx=0,
+                    left=0,
+                    top=0,
+                    width=primary_width,
+                    height=primary_height,
                 )
-                # dxcam シングルトンキャッシュを全クリアして確実に新しいインスタンスを取得
+
+            logger.info(
+                "dxcam ディスプレイ物理解像度: %dx%d", primary_width, primary_height
+            )
+
+            # 録画領域がプライマリモニタの範囲内にあるか確認
+            if region is not None:
+                local_rect = _virtual_to_local(region, primary_monitor)
+                if local_rect is None:
+                    # 録画領域がプライマリモニタ外 → mss にフォールバック
+                    logger.info(
+                        "録画領域がプライマリモニタ外です。mss にフォールバックします。"
+                    )
+                    use_mss_fallback = True
+            else:
+                local_rect = None
+
+            if use_mss_fallback:
+                # カメラを解放して mss ワーカーに切り替え
                 try:
                     factory = getattr(dxcam, "_DXFactory__factory", None) or getattr(dxcam, "__factory", None)
                     if factory is not None and hasattr(factory, "_camera_instances"):
                         factory._camera_instances.clear()
                 except Exception:
                     pass
+                del camera
+                camera = None
+                self._capture_worker_mss()
+                return
 
-                camera = dxcam.create(
-                    device_idx=target_monitor.device_idx,
-                    output_idx=target_monitor.output_idx,
-                    output_color="BGR",
-                )
-                # dxcam が報告する実際の解像度を使用（MonitorInfo のサイズよりこちらが正確）
-                display_width = camera.width
-                display_height = camera.height
-            else:
-                # モニタ情報が取れない場合はデフォルト（プライマリモニタ）
-                logger.info("モニタ情報なし。プライマリモニタでキャプチャします。")
-                camera = dxcam.create(output_color="BGR")
-                display_width = camera.width
-                display_height = camera.height
-                # フォールバック用にダミーのモニタ情報を作成
-                target_monitor = MonitorInfo(
-                    device_idx=0,
-                    output_idx=0,
-                    left=0,
-                    top=0,
-                    width=display_width,
-                    height=display_height,
-                )
-
-            logger.info(
-                "dxcam ディスプレイ物理解像度: %dx%d", display_width, display_height
-            )
-
-            # MonitorInfo のサイズを dxcam が報告する実際の解像度で上書き
-            # （DPI スケーリング等で差異がある場合に対応）
-            target_monitor = MonitorInfo(
-                device_idx=target_monitor.device_idx,
-                output_idx=target_monitor.output_idx,
-                left=target_monitor.left,
-                top=target_monitor.top,
-                width=display_width,
-                height=display_height,
-            )
+            target_monitor = primary_monitor
 
             while not self._stop_event.is_set():
                 frame_start = time.perf_counter()
@@ -494,25 +538,21 @@ class ScreenCapture:
                 try:
                     region = self._get_current_region()
                     if region is not None:
-                        # 仮想デスクトップ座標をモニタローカル座標に変換
                         local_rect = _virtual_to_local(region, target_monitor)
                         if local_rect is not None:
                             frame = camera.grab(region=local_rect)
                         else:
-                            # 変換失敗（領域がモニタ外）→ モニタ全体をキャプチャ
                             frame = camera.grab()
                     else:
                         frame = camera.grab()
 
                     if frame is not None:
-                        # 実際の解像度を記録
                         h, w = frame.shape[:2]
                         self._actual_resolution = (w, h)
                         self._store_frame(frame)
                 except Exception:
                     logger.exception("dxcam フレームのキャプチャ中にエラーが発生しました。")
 
-                # 15fps を保証するフレームレート制御
                 elapsed = time.perf_counter() - frame_start
                 sleep_time = FRAME_INTERVAL - elapsed
                 if sleep_time > 0:
@@ -522,7 +562,6 @@ class ScreenCapture:
         finally:
             if camera is not None:
                 try:
-                    # dxcam のシングルトンキャッシュから全インスタンスを削除
                     try:
                         factory = getattr(dxcam, "_DXFactory__factory", None) or getattr(dxcam, "__factory", None)
                         if factory is not None and hasattr(factory, "_camera_instances"):

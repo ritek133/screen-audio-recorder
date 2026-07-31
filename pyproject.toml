@@ -26,6 +26,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+aws = [
+    "boto3>=1.28.0",
+    "amazon-transcribe-streaming-sdk>=0.6.0",
+]
 dev = [
     "hypothesis==6.112.2",
     "pytest==8.3.3",

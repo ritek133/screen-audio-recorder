@@ -62,10 +62,16 @@ screen-audio-recorder/
 │   └── download_llama_server.py      # llama-server のダウンロード
 │
 ├── docs/                         # ドキュメント
-│   ├── user-manual.md                # 操作説明書
-│   ├── blog-audio-recording-knowledge.md   # 音声録音の技術知見
-│   ├── blog-audio-video-sync-solved.md     # 音声映像同期の解決記録
-│   └── sync-troubleshooting-history.md     # 同期問題のトラブルシュート履歴
+│   ├── 01.操作説明書/                # ユーザーマニュアル
+│   │   ├── user-manual.md
+│   │   └── user-manual.html
+│   ├── 02.ブログ/                    # 技術ブログ記事
+│   │   ├── blog-audio-recording-knowledge.md
+│   │   ├── blog-audio-video-sync-solved.md
+│   │   └── user-manual-for-blog.html
+│   └── 03.技術記録/                  # トラブルシュート・社内資料
+│       ├── sync-troubleshooting-history.md
+│       └── dx-solution-google-slides.md
 │
 ├── dist/                         # ビルド成果物（PyInstaller 出力）
 │   └── screen-audio-recorder/        # 配布用実行ファイル一式
@@ -228,6 +234,6 @@ screen-audio-recorder-v0.2.0-full.zip
 
 ## ドキュメント
 
-- [操作説明書](docs/user-manual.md)
-- [音声録音の技術知見](docs/blog-audio-recording-knowledge.md)
-- [音声映像同期の解決記録](docs/blog-audio-video-sync-solved.md)
+- [操作説明書](docs/01.操作説明書/user-manual.md)
+- [音声録音の技術知見](docs/02.ブログ/blog-audio-recording-knowledge.md)
+- [音声映像同期の解決記録](docs/02.ブログ/blog-audio-video-sync-solved.md)

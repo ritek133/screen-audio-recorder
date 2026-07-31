@@ -1,8 +1,9 @@
-"""LlmClient: ローカル LLM またはオンプレ API 経由でテキスト生成を行うクライアント.
+"""LlmClient: ローカル LLM またはオンプレ API / AWS Bedrock 経由でテキスト生成を行うクライアント.
 
 ローカルモード: ``llama-server`` (llama.cpp) をサブプロセスとして起動し、
 OpenAI 互換 API 経由で推論する。pip install 不要、PyInstaller 互換。
 API モード: 外部の OpenAI 互換 API に標準ライブラリで POST。
+AWS Bedrock モード: Amazon Bedrock Converse API 経由で推論する。
 
 **Validates: Requirements 10.4, 10.5**
 """
@@ -19,7 +20,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from screen_audio_recorder.models import LlmBackend, LlmSettings
+from screen_audio_recorder.models import AwsSettings, LlmBackend, LlmSettings
 
 logger = logging.getLogger(__name__)
 
@@ -71,24 +72,28 @@ def _find_llama_server() -> str | None:
 
 
 class LlmClient:
-    """ローカル LLM またはオンプレ API 経由でテキスト生成を行うクライアント.
+    """ローカル LLM / オンプレ API / AWS Bedrock 経由でテキスト生成を行うクライアント.
 
     ローカルモードでは llama-server をサブプロセスとして起動し、
     OpenAI 互換 API（localhost）経由で推論する。
     API モードでは外部エンドポイントに直接 POST する。
+    AWS Bedrock モードでは Amazon Bedrock Converse API を使用する。
 
     Attributes:
         _settings: 現在の LLM 設定
+        _aws_settings: AWS 接続設定
         _server_process: ローカルモード時の llama-server プロセス
         _available: LLM が利用可能かどうか
         _endpoint: 推論に使用する API エンドポイント URL
     """
 
-    def __init__(self, settings: LlmSettings) -> None:
+    def __init__(self, settings: LlmSettings, aws_settings: AwsSettings | None = None) -> None:
         self._settings = settings
+        self._aws_settings = aws_settings or AwsSettings()
         self._server_process: subprocess.Popen | None = None
         self._available = False
         self._endpoint: str = ""
+        self._bedrock_client = None
         self._initialize()
 
     def _initialize(self) -> None:
@@ -96,9 +101,12 @@ class LlmClient:
         self._stop_server()
         self._available = False
         self._endpoint = ""
+        self._bedrock_client = None
 
         if self._settings.backend == LlmBackend.LOCAL:
             self._init_local()
+        elif self._settings.backend == LlmBackend.AWS_BEDROCK:
+            self._init_bedrock()
         else:
             self._init_api()
 
@@ -262,14 +270,41 @@ class LlmClient:
         self._available = True
         logger.info("API モードで初期化しました。エンドポイント: %s", endpoint)
 
+    def _init_bedrock(self) -> None:
+        """Amazon Bedrock モードを初期化する."""
+        try:
+            from screen_audio_recorder.aws_utils import create_boto3_client, is_boto3_available
+
+            if not is_boto3_available():
+                logger.warning(
+                    "boto3 が利用不可のため、Amazon Bedrock を使用できません。"
+                    "pip install boto3 を実行してください。"
+                )
+                return
+
+            self._bedrock_client = create_boto3_client(
+                "bedrock-runtime", self._aws_settings
+            )
+            self._available = True
+            logger.info(
+                "Amazon Bedrock モードで初期化しました。モデル: %s, リージョン: %s",
+                self._settings.bedrock_model_id,
+                self._aws_settings.region,
+            )
+        except Exception as exc:
+            logger.error("Amazon Bedrock の初期化に失敗しました: %s", exc)
+            self._bedrock_client = None
+
     @property
     def available(self) -> bool:
         """LLM が利用可能かどうかを返す."""
         return self._available
 
-    def reload(self, settings: LlmSettings) -> None:
+    def reload(self, settings: LlmSettings, aws_settings: AwsSettings | None = None) -> None:
         """設定変更時にクライアントを再初期化する."""
         self._settings = settings
+        if aws_settings is not None:
+            self._aws_settings = aws_settings
         self._initialize()
 
     def shutdown(self) -> None:
@@ -281,8 +316,15 @@ class LlmClient:
         """プロンプトを送信してテキストを生成する.
 
         ローカルモード・API モードともに OpenAI 互換 API で通信する。
+        AWS Bedrock モードでは Converse API を使用する。
         """
-        if not self._available or not self._endpoint:
+        if not self._available:
+            return None
+
+        if self._settings.backend == LlmBackend.AWS_BEDROCK:
+            return self._call_bedrock(prompt)
+
+        if not self._endpoint:
             return None
 
         return self._call_api(prompt)
@@ -341,4 +383,53 @@ class LlmClient:
             return None
         except Exception as exc:
             logger.error("API 推論で予期しないエラーが発生しました: %s", exc)
+            return None
+
+    def _call_bedrock(self, prompt: str) -> str | None:
+        """Amazon Bedrock Converse API でテキスト生成する."""
+        if self._bedrock_client is None:
+            return None
+
+        model_id = self._settings.bedrock_model_id
+
+        try:
+            logger.debug(
+                "Bedrock リクエスト送信: model=%s, prompt_len=%d chars",
+                model_id,
+                len(prompt),
+            )
+
+            response = self._bedrock_client.converse(
+                modelId=model_id,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [{"text": prompt}],
+                    }
+                ],
+                system=[
+                    {
+                        "text": "あなたは日本語のテキスト処理アシスタントです。必ず日本語で回答してください。"
+                    }
+                ],
+                inferenceConfig={
+                    "maxTokens": self._settings.max_tokens,
+                    "temperature": self._settings.temperature,
+                },
+            )
+
+            # Converse API のレスポンスからテキストを取得
+            output = response.get("output", {})
+            message = output.get("message", {})
+            content = message.get("content", [])
+
+            if content:
+                text = content[0].get("text", "").strip()
+                if text:
+                    logger.debug("Bedrock 応答: %d 文字", len(text))
+                    return text
+
+            return None
+        except Exception as exc:
+            logger.error("Bedrock 推論に失敗しました: %s", exc)
             return None

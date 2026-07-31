@@ -1,0 +1,284 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Screen Audio Recorder - vLLM 推論サーバー
+  GPU インスタンス (g5.xlarge) に vLLM をデプロイし、
+  Whisper 音声文字起こしと LLM テキスト後処理を提供する。
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: screen-recorder
+    Description: プロジェクト名（リソース名のプレフィックス）
+
+  InstanceType:
+    Type: String
+    Default: g5.xlarge
+    AllowedValues:
+      - g5.xlarge
+      - g5.2xlarge
+      - g5.4xlarge
+      - g6.xlarge
+      - g6.2xlarge
+    Description: >
+      GPU インスタンスタイプ。
+      g5.xlarge: A10G 24GB VRAM（Whisper Large + 7B LLM に十分）
+      g5.2xlarge: A10G 24GB + vCPU/RAM 増強
+      g5.4xlarge: A10G 24GB + さらに vCPU/RAM 増強
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: SSH 接続用のキーペア名
+
+  EbsVolumeSize:
+    Type: Number
+    Default: 100
+    MinValue: 50
+    Description: EBS ボリュームサイズ (GB)。モデルファイル格納のため 100GB 推奨。
+
+  VllmModelWhisper:
+    Type: String
+    Default: openai/whisper-large-v3
+    Description: vLLM で読み込む Whisper モデル (HuggingFace ID)
+
+  VllmModelLlm:
+    Type: String
+    Default: ""
+    Description: >
+      vLLM で読み込む LLM モデル (HuggingFace ID)。
+      空の場合は Whisper のみ起動。例: meta-llama/Llama-3.1-8B-Instruct
+
+  UseSpotInstance:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: スポットインスタンスを使用するか（コスト削減、中断リスクあり）
+
+Conditions:
+  UseSpot: !Equals [!Ref UseSpotInstance, "true"]
+  HasLlmModel: !Not [!Equals [!Ref VllmModelLlm, ""]]
+
+Resources:
+  # ============================================================
+  # IAM ロール（EC2 用）
+  # ============================================================
+  VllmInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-vllm-instance-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # SSM セッションマネージャーでの接続を許可（SSH 不要な管理）
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: VllmCloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ec2/${ProjectName}-vllm*"
+
+  VllmInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref VllmInstanceRole
+
+  # ============================================================
+  # Elastic IP（固定 IP）
+  # ============================================================
+  VllmElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-vllm-eip"
+
+  # ============================================================
+  # EC2 インスタンス
+  # ============================================================
+  VllmInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref VllmInstanceProfile
+      SubnetId:
+        Fn::ImportValue: !Sub "${ProjectName}-PublicSubnetId"
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub "${ProjectName}-VllmSgId"
+      # Deep Learning AMI (Ubuntu 22.04) - NVIDIA ドライバ・CUDA プリインストール
+      ImageId: !FindInMap [RegionAmiMap, !Ref "AWS::Region", Ami]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref EbsVolumeSize
+            VolumeType: gp3
+            Iops: 3000
+            Throughput: 125
+            DeleteOnTermination: true
+      InstanceMarketOptions:
+        !If
+          - UseSpot
+          - MarketType: spot
+            SpotOptions:
+              SpotInstanceType: persistent
+              InstanceInterruptionBehavior: stop
+          - !Ref "AWS::NoValue"
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euo pipefail
+
+            # ログ出力
+            exec > >(tee /var/log/user-data.log) 2>&1
+            echo "=== vLLM セットアップ開始: $(date) ==="
+
+            # システムアップデート
+            apt-get update -y
+            apt-get install -y python3-pip python3-venv nginx certbot python3-certbot-nginx
+
+            # vLLM インストール
+            python3 -m venv /opt/vllm-env
+            source /opt/vllm-env/bin/activate
+            pip install --upgrade pip
+            pip install vllm
+
+            # vLLM サービス設定（Whisper 用）
+            cat > /etc/systemd/system/vllm-whisper.service << 'EOF'
+            [Unit]
+            Description=vLLM Whisper Server
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=root
+            WorkingDirectory=/opt
+            Environment="PATH=/opt/vllm-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ExecStart=/opt/vllm-env/bin/python -m vllm.entrypoints.openai.api_server \
+              --model ${WhisperModel} \
+              --host 0.0.0.0 \
+              --port 8000 \
+              --max-model-len 448 \
+              --gpu-memory-utilization 0.4
+            Restart=always
+            RestartSec=10
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            systemctl daemon-reload
+            systemctl enable vllm-whisper
+            systemctl start vllm-whisper
+
+            ${LlmServiceBlock}
+
+            echo "=== vLLM セットアップ完了: $(date) ==="
+          - WhisperModel: !Ref VllmModelWhisper
+            LlmServiceBlock: !If
+              - HasLlmModel
+              - !Sub |
+                  # vLLM サービス設定（LLM 用）
+                  cat > /etc/systemd/system/vllm-llm.service << 'LLMEOF'
+                  [Unit]
+                  Description=vLLM LLM Server
+                  After=network.target
+
+                  [Service]
+                  Type=simple
+                  User=root
+                  WorkingDirectory=/opt
+                  Environment="PATH=/opt/vllm-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                  ExecStart=/opt/vllm-env/bin/python -m vllm.entrypoints.openai.api_server \
+                    --model ${VllmModelLlm} \
+                    --host 0.0.0.0 \
+                    --port 8001 \
+                    --gpu-memory-utilization 0.5
+                  Restart=always
+                  RestartSec=10
+
+                  [Install]
+                  WantedBy=multi-user.target
+                  LLMEOF
+
+                  systemctl daemon-reload
+                  systemctl enable vllm-llm
+                  systemctl start vllm-llm
+              - ""
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-vllm-server"
+
+  # EIP をインスタンスに関連付け
+  VllmEipAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref VllmInstance
+      AllocationId: !GetAtt VllmElasticIp.AllocationId
+
+  # ============================================================
+  # CloudWatch ロググループ
+  # ============================================================
+  VllmLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/ec2/${ProjectName}-vllm"
+      RetentionInDays: 14
+
+# ============================================================
+# AMI マッピング（Deep Learning AMI - Ubuntu 22.04）
+# ============================================================
+Mappings:
+  RegionAmiMap:
+    ap-northeast-1:
+      # Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)
+      # 最新の AMI ID は AWS コンソールで確認してください
+      Ami: ami-0b828c1c5ac3f13ee
+    us-east-1:
+      Ami: ami-0a0c8eebcdd6dcbd0
+    us-west-2:
+      Ami: ami-0a0c8eebcdd6dcbd0
+    ap-southeast-1:
+      Ami: ami-0a0c8eebcdd6dcbd0
+
+Outputs:
+  VllmInstanceId:
+    Description: vLLM EC2 インスタンス ID
+    Value: !Ref VllmInstance
+
+  VllmPublicIp:
+    Description: vLLM サーバーの固定パブリック IP
+    Value: !Ref VllmElasticIp
+
+  VllmWhisperEndpoint:
+    Description: >
+      vLLM Whisper エンドポイント URL。
+      アプリの「文字起こし設定 → vLLM エンドポイント」に入力。
+    Value: !Sub "http://${VllmElasticIp}:8000/v1/audio/transcriptions"
+
+  VllmLlmEndpoint:
+    Description: >
+      vLLM LLM エンドポイント URL（LLM モデル指定時のみ有効）。
+      アプリの「LLM 設定 → API エンドポイント」に入力。
+    Value: !If
+      - HasLlmModel
+      - !Sub "http://${VllmElasticIp}:8001/v1/chat/completions"
+      - "N/A (LLM モデル未指定)"
+
+  SshCommand:
+    Description: SSH 接続コマンド
+    Value: !Sub "ssh -i ${KeyPairName}.pem ubuntu@${VllmElasticIp}"

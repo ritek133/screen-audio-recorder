@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Screen Audio Recorder 操作説明書</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+  line-height: 1.8;
+  color: #333;
+  background: #f8f9fa;
+  padding: 0;
+}
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  background: #fff;
+  padding: 48px 64px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  min-height: 100vh;
+}
+h1 {
+  font-size: 2em;
+  color: #1a1a2e;
+  border-bottom: 3px solid #4a90d9;
+  padding-bottom: 12px;
+  margin-bottom: 24px;
+}
+h2 {
+  font-size: 1.4em;
+  color: #2c3e50;
+  margin-top: 48px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e0e0e0;
+}
+h3 {
+  font-size: 1.1em;
+  color: #34495e;
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+p, ul, ol {
+  margin-bottom: 12px;
+}
+ul, ol {
+  padding-left: 24px;
+}
+li {
+  margin-bottom: 4px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+  font-size: 0.95em;
+}
+th, td {
+  border: 1px solid #ddd;
+  padding: 10px 14px;
+  text-align: left;
+}
+th {
+  background: #f0f4f8;
+  font-weight: 600;
+  color: #2c3e50;
+}
+tr:nth-child(even) {
+  background: #fafbfc;
+}
+code {
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "Consolas", "Source Code Pro", monospace;
+  font-size: 0.9em;
+}
+pre {
+  background: #f5f5f5;
+  padding: 12px 16px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+pre code {
+  background: none;
+  padding: 0;
+}
+.note {
+  background: #fff8e1;
+  border-left: 4px solid #ffc107;
+  padding: 12px 16px;
+  margin: 16px 0;
+  border-radius: 0 4px 4px 0;
+}
+nav {
+  background: #f8f9fa;
+  padding: 20px 24px;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+}
+nav ol {
+  columns: 2;
+  column-gap: 32px;
+}
+nav a {
+  color: #4a90d9;
+  text-decoration: none;
+}
+nav a:hover {
+  text-decoration: underline;
+}
+a {
+  color: #4a90d9;
+}
+hr {
+  margin: 32px 0;
+  border: none;
+  border-top: 1px solid #e0e0e0;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Screen Audio Recorder 操作説明書</h1>
+
+<nav>
+<h2 style="margin-top:0;">目次</h2>
+<ol>
+<li><a href="#intro">はじめに</a></li>
+<li><a href="#requirements">動作環境</a></li>
+<li><a href="#install">インストールと起動</a></li>
+<li><a href="#ui">画面構成</a></li>
+<li><a href="#basic">基本操作</a></li>
+<li><a href="#region">録画領域の調整</a></li>
+<li><a href="#memo">メモの管理</a></li>
+<li><a href="#llm">LLM 設定</a></li>
+<li><a href="#advanced">詳細設定</a></li>
+<li><a href="#data">データの保存場所</a></li>
+<li><a href="#update">自動更新</a></li>
+<li><a href="#troubleshoot">トラブルシューティング</a></li>
+</ol>
+</nav>
+
+<hr style="margin: 32px 0; border: none; border-top: 1px solid #e0e0e0;">
+
+<section id="intro">
+<h2>はじめに</h2>
+<p>Screen Audio Recorder は、Windows PC の画面とマイク・システム音声を同時に録画・録音し、音声を自動で文字起こしして「メモ」として保存するアプリケーションです。</p>
+<p><strong>主な特徴:</strong></p>
+<ul>
+<li>管理者権限なしで動作（企業環境でも利用可能）</li>
+<li>画面録画 + マイク音声 + システム音声の同時録音</li>
+<li>音声のみの録音モード</li>
+<li>ローカル AI による自動文字起こし（外部サーバーへのデータ送信なし）</li>
+<li>LLM によるテキスト修正・要約・テーマ自動生成</li>
+<li>メモの一覧管理・検索・再生</li>
+</ul>
+</section>
+
+<section id="requirements">
+<h2>動作環境</h2>
+<table>
+<tr><th>項目</th><th>要件</th></tr>
+<tr><td>OS</td><td>Windows 10 バージョン 1903 以降、Windows 11</td></tr>
+<tr><td>権限</td><td>管理者権限不要</td></tr>
+<tr><td>ディスク</td><td>初回起動時に Whisper モデル（約500MB〜3GB）のダウンロードが必要</td></tr>
+<tr><td>GPU（任意）</td><td>NVIDIA GTX 1050 以上で H.264 ハードウェアエンコード対応</td></tr>
+</table>
+</section>
+
+<section id="install">
+<h2>インストールと起動</h2>
+<h3>インストール</h3>
+<ol>
+<li>配布された <code>screen-audio-recorder.exe</code>（または展開済みフォルダ）を任意の場所に配置します</li>
+<li>インストーラーは不要です。管理者権限も不要です</li>
+</ol>
+<h3>起動</h3>
+<ol>
+<li><code>screen-audio-recorder.exe</code> をダブルクリックします</li>
+<li>メインウィンドウが表示されます</li>
+<li>ステータスバーに「モデル読み込み中...」と表示されている間は、Whisper 文字起こしモデルをバックグラウンドで読み込んでいます</li>
+<li>読み込みが完了すると録画ボタンが有効になり、使用可能になります</li>
+</ol>
+<div class="note">
+<strong>初回起動時の注意:</strong> Whisper モデルのダウンロードが自動で行われるため、初回は起動に時間がかかる場合があります。
+</div>
+</section>
+
+<section id="ui">
+<h2>画面構成</h2>
+<p>メインウィンドウは以下の4つのタブで構成されています。</p>
+
+<h3>録画タブ（メインタブ）</h3>
+<p>アプリ起動時に表示されるメインの操作画面です。</p>
+<table>
+<tr><th>UI 要素</th><th>説明</th></tr>
+<tr><td>録画モード選択</td><td>「画面+音声」または「音声のみ」をラジオボタンで選択</td></tr>
+<tr><td>マイクデバイス選択</td><td>使用するマイクをドロップダウンから選択</td></tr>
+<tr><td>開始ボタン</td><td>録画・録音を開始</td></tr>
+<tr><td>停止ボタン</td><td>録画・録音を停止</td></tr>
+<tr><td>ステータスバー</td><td>現在の状態（モデル読み込み中、録画中、文字起こし中など）を表示</td></tr>
+<tr><td>メモ一覧</td><td>保存済みメモの一覧（下部に表示）</td></tr>
+</table>
+
+<h3>LLM 設定タブ</h3>
+<p>文字起こし後のテキスト処理に使用する LLM（大規模言語モデル）の設定を行います。</p>
+
+<h3>詳細設定タブ</h3>
+<p>ログレベルなどの詳細設定を行います。</p>
+
+<h3>このアプリについてタブ</h3>
+<p>バージョン情報・作者情報を表示します。</p>
+</section>
+
+<section id="basic">
+<h2>基本操作</h2>
+
+<h3>画面+音声モードで録画する</h3>
+<ol>
+<li>録画モードで「画面+音声」を選択します</li>
+<li>マイクデバイスを選択します（システム音声は自動で取得されます）</li>
+<li>画面上に表示される赤枠（録画領域オーバーレイ）で録画範囲を調整します</li>
+<li><strong>「開始」ボタン</strong> をクリックします</li>
+<li>録画中はステータスバーに録画状態が表示されます</li>
+<li><strong>「停止」ボタン</strong> をクリックして録画を終了します</li>
+<li>自動で文字起こしが開始され、完了するとメモ一覧に追加されます</li>
+</ol>
+
+<h3>音声のみモードで録音する</h3>
+<ol>
+<li>録画モードで「音声のみ」を選択します</li>
+<li>マイクデバイスを選択します</li>
+<li><strong>「開始」ボタン</strong> をクリックします</li>
+<li><strong>「停止」ボタン</strong> をクリックして録音を終了します</li>
+<li>自動で文字起こしが開始され、完了するとメモ一覧に追加されます</li>
+</ol>
+
+<div class="note">
+<strong>音声について:</strong> マイク音声とシステム音声（PC のスピーカー出力）の両方が自動で録音されます。音量差は自動で補正されます。
+</div>
+
+<h3>録画の出力形式</h3>
+<table>
+<tr><th>モード</th><th>出力形式</th></tr>
+<tr><td>画面+音声</td><td>MP4（H.264 映像 + 音声）</td></tr>
+<tr><td>音声のみ</td><td>WAV</td></tr>
+</table>
+</section>
+
+<section id="region">
+<h2>録画領域の調整</h2>
+<p>「画面+音声」モードでは、録画する画面範囲を赤枠のオーバーレイで指定できます。</p>
+
+<h3>操作方法</h3>
+<table>
+<tr><th>操作</th><th>動作</th></tr>
+<tr><td>ドラッグ（左クリック+移動）</td><td>録画領域を移動</td></tr>
+<tr><td>右下角をドラッグ</td><td>録画領域をリサイズ</td></tr>
+<tr><td>マウスホイール（スクロール）</td><td>録画領域を拡大・縮小</td></tr>
+</table>
+
+<h3>サイズ制限</h3>
+<ul>
+<li>最小サイズ: 320×240 ピクセル</li>
+<li>最大サイズ: ディスプレイの解像度と同一</li>
+</ul>
+
+<div class="note">
+<strong>注意:</strong> 録画中はオーバーレイが非表示になります（画面キャプチャへの干渉を防ぐため）。
+</div>
+</section>
+
+<section id="memo">
+<h2>メモの管理</h2>
+<p>録画・録音が完了すると、文字起こし結果が自動でメモとして保存されます。</p>
+
+<h3>メモ一覧の見方</h3>
+<p>メモ一覧には以下の情報が表示されます:</p>
+<ul>
+<li><strong>作成日時:</strong> 録画・録音を行った日時</li>
+<li><strong>テーマ:</strong> 内容を表す短いキーワード（10文字以内、自動生成）</li>
+<li><strong>本文プレビュー:</strong> 文字起こし内容の先頭50文字</li>
+</ul>
+<p>メモは作成日時の降順（新しいものが上）で表示されます。</p>
+
+<h3>メモの操作</h3>
+<table>
+<tr><th>操作</th><th>説明</th></tr>
+<tr><td>メモをクリック</td><td>全文と要約を下部ペインに表示</td></tr>
+<tr><td>▶ 再生ボタン</td><td>録画・録音ファイルをデフォルトのメディアプレーヤーで再生</td></tr>
+<tr><td>削除ボタン</td><td>メモと関連する録画ファイルを削除</td></tr>
+<tr><td>LLM 再処理ボタン</td><td>LLM でテーマ・要約・テキスト修正を再実行</td></tr>
+<tr><td>テーマをダブルクリック</td><td>テーマを手動で編集</td></tr>
+</table>
+
+<h3>ページネーション</h3>
+<p>メモが50件を超える場合、ページ送りボタンで前後のページに移動できます。</p>
+</section>
+
+<section id="llm">
+<h2>LLM 設定</h2>
+<p>LLM（大規模言語モデル）を使用すると、文字起こしテキストの品質が向上します。</p>
+
+<h3>LLM が行う処理</h3>
+<ol>
+<li><strong>テキスト修正:</strong> 句読点の補完、誤字脱字の修正</li>
+<li><strong>要約生成:</strong> 内容を3〜5文で要約</li>
+<li><strong>テーマ生成:</strong> 内容を表す10文字以内のキーワード</li>
+</ol>
+<div class="note">
+<strong>LLM なしでも動作します:</strong> LLM が未設定の場合は、janome（日本語形態素解析）によるテーマ生成のみが行われます。
+</div>
+
+<h3>推論バックエンドの選択</h3>
+<table>
+<tr><th>バックエンド</th><th>説明</th></tr>
+<tr><td>ローカル（llama-server）</td><td>PC 上で LLM を実行。インターネット不要。GGUF 形式のモデルファイルが必要</td></tr>
+<tr><td>オンプレ API（OpenAI 互換）</td><td>社内サーバー等の OpenAI 互換 API に接続</td></tr>
+</table>
+
+<h3>ローカルモデルのセットアップ</h3>
+<ol>
+<li><strong>LLM 設定タブ</strong> を開きます</li>
+<li>推論バックエンドで「ローカル（llama-server）」を選択します</li>
+<li>llama-server が未インストールの場合は「llama-server をダウンロード」ボタンでインストールします</li>
+<li>モデルファイルを以下のいずれかの方法で設定します:
+  <ul>
+  <li>「ダウンロード」ボタンで推奨モデルをダウンロード</li>
+  <li>「参照...」ボタンで既存の GGUF ファイルを指定</li>
+  </ul>
+</li>
+<li>「設定を保存」をクリックします</li>
+<li>「接続テスト」で動作を確認します</li>
+</ol>
+
+<h3>ダウンロード可能なモデル</h3>
+<table>
+<tr><th>モデル</th><th>サイズ</th><th>特徴</th></tr>
+<tr><td>Qwen2.5 1.5B (Q4_K_M)</td><td>約1.0GB</td><td>最軽量・日本語対応◎</td></tr>
+<tr><td>Gemma 2 2B (Q4_K_M)</td><td>約1.5GB</td><td>バランス型・日本語対応◎</td></tr>
+</table>
+
+<h3>API バックエンドのセットアップ</h3>
+<ol>
+<li><strong>LLM 設定タブ</strong> を開きます</li>
+<li>推論バックエンドで「オンプレ API（OpenAI 互換）」を選択します</li>
+<li>エンドポイント URL を入力します（例: <code>http://server:8080/v1/chat/completions</code>）</li>
+<li>必要に応じて API キーを入力します</li>
+<li>「設定を保存」をクリックします</li>
+<li>「接続テスト」で動作を確認します</li>
+</ol>
+
+<h3>生成パラメータ</h3>
+<table>
+<tr><th>パラメータ</th><th>デフォルト値</th><th>説明</th></tr>
+<tr><td>最大トークン数</td><td>1024</td><td>生成テキストの最大長</td></tr>
+<tr><td>Temperature</td><td>0.3</td><td>生成のランダム性（低いほど安定）</td></tr>
+<tr><td>コンテキストサイズ</td><td>8192</td><td>入力可能なトークン数（大きいほどメモリ使用量増）</td></tr>
+<tr><td>タイムアウト</td><td>600秒</td><td>応答待ち時間（CPU 推論は時間がかかる場合あり）</td></tr>
+</table>
+
+<h3>文字起こし設定（Whisper モデルサイズ）</h3>
+<table>
+<tr><th>モデルサイズ</th><th>精度</th><th>サイズ</th><th>速度</th></tr>
+<tr><td>tiny</td><td>低</td><td>最小</td><td>最速</td></tr>
+<tr><td>base</td><td>やや低</td><td>小</td><td>速い</td></tr>
+<tr><td>small（デフォルト）</td><td>中</td><td>約500MB</td><td>標準</td></tr>
+<tr><td>medium</td><td>高</td><td>約1.5GB</td><td>やや遅い</td></tr>
+<tr><td>large</td><td>最高</td><td>約3GB</td><td>遅い</td></tr>
+</table>
+<div class="note">
+<strong>変更の反映:</strong> モデルサイズの変更は次回の文字起こし時に反映されます。
+</div>
+
+<h3>プロンプトテンプレートのカスタマイズ</h3>
+<p>LLM に送信するプロンプトを編集できます。テンプレート内の <code>{text}</code> が実際のテキストに置換されます。</p>
+<ul>
+<li><strong>テキスト修正:</strong> 句読点補完・誤字修正の指示</li>
+<li><strong>要約生成:</strong> 要約作成の指示</li>
+<li><strong>テーマ生成:</strong> テーマ（キーワード）生成の指示</li>
+</ul>
+<p>「デフォルトに戻す」ボタンで初期設定に復元できます。</p>
+</section>
+
+<section id="advanced">
+<h2>詳細設定</h2>
+
+<h3>詳細ログの有効化</h3>
+<p>問題が発生した場合のトラブルシューティング用に、詳細ログを有効にできます。</p>
+<ol>
+<li><strong>詳細設定タブ</strong> を開きます</li>
+<li>「詳細ログを有効にする（デバッグ用）」にチェックを入れます</li>
+<li>「設定を保存」をクリックします</li>
+<li><strong>アプリを再起動</strong> します（設定変更は再起動後に反映）</li>
+</ol>
+<p>有効にすると、音量情報やストリーム診断など詳細なログが <code>app.log</code> に出力されます。</p>
+<div class="note">
+<strong>注意:</strong> 詳細ログはパフォーマンスに影響するため、通常運用では無効のままにしてください。
+</div>
+</section>
+
+<section id="data">
+<h2>データの保存場所</h2>
+<p>すべてのデータは以下のフォルダに保存されます:</p>
+<pre><code>C:\Users\&lt;ユーザー名&gt;\Documents\screen-audio-recorder\</code></pre>
+<table>
+<tr><th>ファイル/フォルダ</th><th>内容</th></tr>
+<tr><td><code>recordings/</code></td><td>録画・録音ファイル（MP4, WAV）</td></tr>
+<tr><td><code>models/</code></td><td>ダウンロードした LLM モデル</td></tr>
+<tr><td><code>memos.json</code></td><td>メモデータベース</td></tr>
+<tr><td><code>llm_settings.json</code></td><td>LLM 設定</td></tr>
+<tr><td><code>app_settings.json</code></td><td>アプリ設定（詳細ログなど）</td></tr>
+<tr><td><code>app.log</code></td><td>アプリケーションログ（5MB × 3世代ローテーション）</td></tr>
+</table>
+</section>
+
+<section id="update">
+<h2>自動更新</h2>
+<p>Screen Audio Recorder は GitHub Releases を利用した自動更新機能を備えています。</p>
+
+<h3>更新の確認</h3>
+<ol>
+<li><strong>「このアプリについて」タブ</strong> を開きます</li>
+<li><strong>「更新を確認」ボタン</strong> をクリックします</li>
+<li>最新バージョンがある場合、バージョン番号とリリースノートが表示されます</li>
+<li>「はい」をクリックすると更新のダウンロードが開始されます</li>
+</ol>
+<div class="note">
+<strong>注意:</strong> 録画中は更新確認ができません。録画を停止してから操作してください。
+</div>
+
+<h3>更新の種類</h3>
+<table>
+<tr><th>種類</th><th>内容</th><th>サイズ目安</th></tr>
+<tr><td>通常更新</td><td>exe ファイルのみ置き換え</td><td>約50MB</td></tr>
+<tr><td>フル更新</td><td>exe + _internal フォルダ全体を置き換え</td><td>約200〜400MB</td></tr>
+</table>
+<p>更新種別はリリース内容に基づいて自動で判定されます。</p>
+
+<h3>ダウンロード中の操作</h3>
+<ul>
+<li>プログレスバーで進捗率がリアルタイム表示されます</li>
+<li>ダウンロード速度と残り時間が表示されます</li>
+<li><strong>「キャンセル」ボタン</strong> でダウンロードを中断できます</li>
+</ul>
+
+<h3>更新の適用</h3>
+<p>ダウンロード完了後、更新は自動で適用されます:</p>
+<ol>
+<li>現在のファイルがバックアップされます</li>
+<li>新しいファイルに置き換えられます</li>
+<li>アプリケーションが自動的に再起動します</li>
+</ol>
+<div class="note">
+更新中にエラーが発生した場合は、自動的に旧バージョンに復帰します。
+</div>
+
+<h3>前のバージョンに戻す（ロールバック）</h3>
+<p>更新後に問題が発生した場合、以前のバージョンに戻すことができます:</p>
+<ol>
+<li><strong>「このアプリについて」タブ</strong> を開きます</li>
+<li>バックアップが存在する場合、<strong>「前のバージョンに戻す」ボタン</strong> が表示されます</li>
+<li>ボタンをクリックし、確認ダイアログで「はい」を選択します</li>
+<li>アプリケーションが旧バージョンで再起動します</li>
+</ol>
+<div class="note">
+<strong>注意:</strong> 次回の正常な更新完了時に、古いバックアップは自動的に削除されます。
+</div>
+</section>
+
+<section id="troubleshoot">
+<h2>トラブルシューティング</h2>
+
+<h3>録画ボタンが押せない</h3>
+<ul>
+<li>ステータスバーに「モデル読み込み中...」と表示されている場合は、Whisper モデルの読み込み完了を待ってください</li>
+<li>初回起動時はモデルのダウンロードに数分かかる場合があります</li>
+</ul>
+
+<h3>マイクが認識されない</h3>
+<ul>
+<li>マイクデバイスのドロップダウンに表示されない場合は、Windows の「サウンド設定」でマイクが有効になっているか確認してください</li>
+<li>マイクが利用不可の場合、警告が表示されシステム音声のみで録音が継続されます</li>
+</ul>
+
+<h3>システム音声が録音されない</h3>
+<ul>
+<li>WASAPI ループバック録音を使用しています。音声出力デバイスが正しく設定されているか確認してください</li>
+<li>システム音声の取得に失敗した場合、警告が表示されマイク音声のみで録音が継続されます</li>
+</ul>
+
+<h3>録画の映像がカクつく</h3>
+<ul>
+<li>ハードウェアエンコーダ（NVIDIA NVENC 等）が利用できない場合、CPU エンコード（libx264）にフォールバックします</li>
+<li>CPU エンコードは負荷が高いため、録画領域を小さくすると改善する場合があります</li>
+<li>詳細ログを有効にして <code>app.log</code> でエンコーダの検出状況を確認できます</li>
+</ul>
+
+<h3>LLM が動作しない</h3>
+<ul>
+<li>「接続テスト」ボタンで接続状態を確認してください</li>
+<li>ローカルモードの場合: llama-server がインストールされているか、モデルファイルのパスが正しいか確認してください</li>
+<li>API モードの場合: エンドポイント URL が正しいか、サーバーが起動しているか確認してください</li>
+<li>LLM が利用不可でも、文字起こしとテーマ生成（janome フォールバック）は動作します</li>
+</ul>
+
+<h3>音声と映像がずれる</h3>
+<ul>
+<li>本アプリは音声と映像の同期処理を自動で行っています（精度 0.3 秒以内）</li>
+<li>大きなずれが発生する場合は、詳細ログを有効にして <code>app.log</code> の同期オフセット情報を確認してください</li>
+</ul>
+
+<h3>ログファイルの確認方法</h3>
+<p>ログファイルは以下の場所にあります:</p>
+<pre><code>C:\Users\&lt;ユーザー名&gt;\Documents\screen-audio-recorder\app.log</code></pre>
+<p>テキストエディタで開いてエラーメッセージを確認できます。</p>
+
+<h3>更新の確認に失敗する</h3>
+<ul>
+<li>インターネット接続を確認してください</li>
+<li>プロキシ環境の場合、環境変数 <code>HTTPS_PROXY</code> が正しく設定されているか確認してください</li>
+<li>詳細ログを有効にして <code>app.log</code> のエラーメッセージを確認してください</li>
+</ul>
+</section>
+
+<hr style="margin: 48px 0 24px; border: none; border-top: 1px solid #e0e0e0;">
+
+<section>
+<h2>バージョン情報</h2>
+<table>
+<tr><td>アプリ名</td><td>Screen Audio Recorder</td></tr>
+<tr><td>バージョン</td><td>0.1.0</td></tr>
+<tr><td>作者</td><td>Taicheng Huang</td></tr>
+<tr><td>会社</td><td>AKKODiSコンサルティング株式会社</td></tr>
+<tr><td>ライセンス</td><td>Proprietary</td></tr>
+</table>
+</section>
+
+<footer style="margin-top: 48px; padding-top: 16px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 0.85em;">
+<p>© 2025 AKKODiSコンサルティング株式会社</p>
+</footer>
+
+</div>
+</body>
+</html>

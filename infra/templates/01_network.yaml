@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Screen Audio Recorder - ネットワーク基盤
+  VPC、サブネット、セキュリティグループを作成する。
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: screen-recorder
+    Description: プロジェクト名（リソース名のプレフィックス）
+
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+    Description: VPC の CIDR ブロック
+
+  PublicSubnetCidr:
+    Type: String
+    Default: "10.0.1.0/24"
+    Description: パブリックサブネットの CIDR ブロック
+
+  AllowedSshCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: SSH アクセスを許可する CIDR（本番では自社 IP に制限推奨）
+
+  AllowedApiCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: vLLM API アクセスを許可する CIDR（本番では自社 IP に制限推奨）
+
+Resources:
+  # ============================================================
+  # VPC
+  # ============================================================
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-vpc"
+
+  # ============================================================
+  # インターネットゲートウェイ
+  # ============================================================
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-igw"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ============================================================
+  # パブリックサブネット
+  # ============================================================
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetCidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-subnet"
+
+  # ============================================================
+  # ルートテーブル
+  # ============================================================
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-rt"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # ============================================================
+  # セキュリティグループ - vLLM サーバー用
+  # ============================================================
+  VllmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName} vLLM server security group"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        # SSH アクセス
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedSshCidr
+          Description: SSH access
+        # vLLM API ポート (8000)
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: !Ref AllowedApiCidr
+          Description: vLLM OpenAI-compatible API
+        # HTTPS (証明書設置時)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedApiCidr
+          Description: HTTPS access
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: "0.0.0.0/0"
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-vllm-sg"
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub "${ProjectName}-VpcId"
+
+  PublicSubnetId:
+    Description: パブリックサブネット ID
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Sub "${ProjectName}-PublicSubnetId"
+
+  VllmSecurityGroupId:
+    Description: vLLM サーバー用セキュリティグループ ID
+    Value: !GetAtt VllmSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${ProjectName}-VllmSgId"

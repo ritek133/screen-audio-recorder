@@ -1,0 +1,58 @@
+[
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "screen-recorder"
+  },
+  {
+    "ParameterKey": "VpcCidr",
+    "ParameterValue": "10.0.0.0/16"
+  },
+  {
+    "ParameterKey": "PublicSubnetCidr",
+    "ParameterValue": "10.0.1.0/24"
+  },
+  {
+    "ParameterKey": "AllowedSshCidr",
+    "ParameterValue": "0.0.0.0/0"
+  },
+  {
+    "ParameterKey": "AllowedApiCidr",
+    "ParameterValue": "0.0.0.0/0"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "g5.xlarge"
+  },
+  {
+    "ParameterKey": "KeyPairName",
+    "ParameterValue": "your-key-pair-name"
+  },
+  {
+    "ParameterKey": "EbsVolumeSize",
+    "ParameterValue": "100"
+  },
+  {
+    "ParameterKey": "VllmModelWhisper",
+    "ParameterValue": "openai/whisper-large-v3"
+  },
+  {
+    "ParameterKey": "VllmModelLlm",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "UseSpotInstance",
+    "ParameterValue": "false"
+  },
+  {
+    "ParameterKey": "CreateAccessKey",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "EnableTranscribe",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "TranscribeS3BucketName",
+    "ParameterValue": ""
+  }
+]
