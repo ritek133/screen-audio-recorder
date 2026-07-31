@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Screen Audio Recorder - SaaS 利用リソース
-  Amazon Bedrock（LLM）と Amazon Transcribe（文字起こし）を
-  デスクトップアプリから利用するための IAM リソースを作成する。
+  Screen Audio Recorder - SaaS 利用リソース（ユーザー単位）
+  ユーザーごとに Bedrock 推論プロファイル + IAM ユーザー + 使用量監視を作成。
+  推論プロファイル経由で CloudWatch メトリクスによる個別使用量追跡が可能。
 
 Parameters:
   ProjectName:
@@ -10,23 +10,24 @@ Parameters:
     Default: screen-recorder
     Description: プロジェクト名（リソース名のプレフィックス）
 
+  UserName:
+    Type: String
+    Description: >
+      対象ユーザー名（例: user-a）。リソース名に使用。
+
   CreateAccessKey:
     Type: String
     Default: "true"
     AllowedValues:
       - "true"
       - "false"
-    Description: >
-      IAM ユーザーのアクセスキーを作成するか。
-      true: アクセスキー認証（アプリに直接設定）
-      false: プロファイル/IAM ロール認証を使用
+    Description: IAM アクセスキーを作成するか
 
-  BedrockModels:
-    Type: CommaDelimitedList
-    Default: "anthropic.claude-3-haiku-20240307-v1:0,anthropic.claude-3-5-sonnet-20241022-v2:0,amazon.nova-micro-v1:0"
+  BedrockModelArn:
+    Type: String
+    Default: "arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
     Description: >
-      アプリから利用を許可する Bedrock モデル ID のリスト。
-      コンマ区切りで指定。
+      推論プロファイルのソースモデル ARN。
 
   EnableTranscribe:
     Type: String
@@ -39,9 +40,20 @@ Parameters:
   TranscribeS3BucketName:
     Type: String
     Default: ""
-    Description: >
-      Transcribe 用の S3 バケット名（既存バケット指定可）。
-      空の場合は新規作成する。音声ファイルの一時保管に使用。
+    Description: Transcribe 用 S3 バケット名。空なら新規作成。
+
+  EnableUsageGuard:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: 使用量ガード（上限超過時にキー無効化）を有効にするか
+
+  MonthlyTokenLimit:
+    Type: Number
+    Default: 500000
+    Description: 月間トークン上限。超過でアクセスキーを自動無効化。
 
 Conditions:
   ShouldCreateAccessKey: !Equals [!Ref CreateAccessKey, "true"]
@@ -49,65 +61,86 @@ Conditions:
   ShouldCreateS3Bucket: !And
     - !Condition ShouldEnableTranscribe
     - !Equals [!Ref TranscribeS3BucketName, ""]
+  ShouldEnableUsageGuard: !And
+    - !Condition ShouldCreateAccessKey
+    - !Equals [!Ref EnableUsageGuard, "true"]
 
 Resources:
   # ============================================================
-  # IAM ユーザー（デスクトップアプリ用）
+  # Bedrock 推論プロファイル（ユーザー単位）
+  # このプロファイル経由の呼び出しが CloudWatch で個別追跡される
+  # ============================================================
+  InferenceProfile:
+    Type: AWS::Bedrock::ApplicationInferenceProfile
+    Properties:
+      InferenceProfileName: !Sub "${ProjectName}-${UserName}"
+      Description: !Sub "${UserName} 用 Bedrock 推論プロファイル"
+      ModelSource:
+        CopyFrom: !Ref BedrockModelArn
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
+
+  # ============================================================
+  # IAM ユーザー
   # ============================================================
   AppUser:
     Type: AWS::IAM::User
     Properties:
-      UserName: !Sub "${ProjectName}-app-user"
+      UserName: !Sub "${ProjectName}-${UserName}"
       Tags:
         - Key: Project
           Value: !Ref ProjectName
-        - Key: Purpose
-          Value: "Desktop app AWS service access"
+        - Key: User
+          Value: !Ref UserName
 
   # ============================================================
-  # IAM ポリシー - Amazon Bedrock
+  # IAM ポリシー - Bedrock（推論プロファイル経由のみ許可）
   # ============================================================
   BedrockPolicy:
     Type: AWS::IAM::Policy
     Properties:
-      PolicyName: !Sub "${ProjectName}-bedrock-policy"
+      PolicyName: !Sub "${ProjectName}-${UserName}-bedrock"
       Users:
         - !Ref AppUser
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          # Bedrock モデルへの推論アクセス
-          - Sid: BedrockInvoke
+          # 推論プロファイル経由のみ許可
+          - Sid: AllowInferenceProfileOnly
             Effect: Allow
             Action:
               - bedrock:InvokeModel
               - bedrock:InvokeModelWithResponseStream
+              - bedrock:Converse
+              - bedrock:ConverseStream
             Resource:
-              !Split
-                - ","
-                - !Sub
-                  - "${Resources}"
-                  - Resources:
-                      !Join
-                        - ","
-                        - !Split
-                          - ","
-                          - !Sub
-                            - "arn:aws:bedrock:${AWS::Region}::foundation-model/${Model}"
-                            - Model: !Select [0, !Ref BedrockModels]
-          # Converse API アクセス（アプリが使用する API）
-          - Sid: BedrockConverse
-            Effect: Allow
+              - !GetAtt InferenceProfile.InferenceProfileArn
+            Condition:
+              StringEquals:
+                bedrock:InferenceProfileArn: !GetAtt InferenceProfile.InferenceProfileArn
+          # 推論プロファイル以外の直接モデル呼び出しを拒否
+          - Sid: DenyDirectModelAccess
+            Effect: Deny
             Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
               - bedrock:Converse
               - bedrock:ConverseStream
             Resource: "*"
-          # モデル一覧取得（設定画面で利用可能モデルを表示するため）
-          - Sid: BedrockListModels
+            Condition:
+              StringNotEquals:
+                bedrock:InferenceProfileArn: !GetAtt InferenceProfile.InferenceProfileArn
+          # 読み取り（設定画面用）
+          - Sid: BedrockReadOnly
             Effect: Allow
             Action:
               - bedrock:ListFoundationModels
               - bedrock:GetFoundationModel
+              - bedrock:ListInferenceProfiles
+              - bedrock:GetInferenceProfile
             Resource: "*"
 
   # ============================================================
@@ -117,20 +150,18 @@ Resources:
     Type: AWS::IAM::Policy
     Condition: ShouldEnableTranscribe
     Properties:
-      PolicyName: !Sub "${ProjectName}-transcribe-policy"
+      PolicyName: !Sub "${ProjectName}-${UserName}-transcribe"
       Users:
         - !Ref AppUser
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          # Transcribe ストリーミング文字起こし
           - Sid: TranscribeStreaming
             Effect: Allow
             Action:
               - transcribe:StartStreamTranscription
               - transcribe:StartStreamTranscriptionWebSocket
             Resource: "*"
-          # Transcribe バッチ文字起こし（長時間音声用）
           - Sid: TranscribeBatch
             Effect: Allow
             Action:
@@ -138,27 +169,21 @@ Resources:
               - transcribe:GetTranscriptionJob
               - transcribe:ListTranscriptionJobs
               - transcribe:DeleteTranscriptionJob
-            Resource: !Sub "arn:aws:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/${ProjectName}-*"
-          # S3 アクセス（音声ファイルアップロード・結果取得）
-          - Sid: TranscribeS3Access
+            Resource: !Sub "arn:aws:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/${ProjectName}-${UserName}-*"
+          - Sid: TranscribeS3
             Effect: Allow
             Action:
               - s3:PutObject
               - s3:GetObject
               - s3:DeleteObject
-              - s3:ListBucket
             Resource:
               - !If
                 - ShouldCreateS3Bucket
-                - !Sub "arn:aws:s3:::${TranscribeAudioBucket}"
-                - !Sub "arn:aws:s3:::${TranscribeS3BucketName}"
-              - !If
-                - ShouldCreateS3Bucket
-                - !Sub "arn:aws:s3:::${TranscribeAudioBucket}/*"
-                - !Sub "arn:aws:s3:::${TranscribeS3BucketName}/*"
+                - !Sub "arn:aws:s3:::${TranscribeAudioBucket}/${UserName}/*"
+                - !Sub "arn:aws:s3:::${TranscribeS3BucketName}/${UserName}/*"
 
   # ============================================================
-  # S3 バケット（Transcribe 音声ファイル一時保管）
+  # S3 バケット（Transcribe 一時保管）
   # ============================================================
   TranscribeAudioBucket:
     Type: AWS::S3::Bucket
@@ -166,7 +191,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub "${ProjectName}-transcribe-audio-${AWS::AccountId}"
+      BucketName: !Sub "${ProjectName}-transcribe-${AWS::AccountId}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -178,22 +203,15 @@ Resources:
         RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
-          # 音声ファイルは 7 日後に自動削除（一時保管用途）
-          - Id: DeleteTempAudio
+          - Id: DeleteTempFiles
             Status: Enabled
             ExpirationInDays: 7
-            Prefix: "audio/"
-          # Transcribe 出力結果は 30 日後に自動削除
-          - Id: DeleteTranscribeOutput
-            Status: Enabled
-            ExpirationInDays: 30
-            Prefix: "output/"
       Tags:
         - Key: Project
           Value: !Ref ProjectName
 
   # ============================================================
-  # IAM アクセスキー（オプション）
+  # IAM アクセスキー
   # ============================================================
   AppUserAccessKey:
     Type: AWS::IAM::AccessKey
@@ -201,41 +219,161 @@ Resources:
     Properties:
       UserName: !Ref AppUser
 
-  # ============================================================
-  # Secrets Manager（アクセスキーの安全な保管）
-  # ============================================================
   AppUserSecret:
     Type: AWS::SecretsManager::Secret
     Condition: ShouldCreateAccessKey
     Properties:
-      Name: !Sub "${ProjectName}/app-credentials"
-      Description: !Sub "${ProjectName} デスクトップアプリ用 AWS 認証情報"
+      Name: !Sub "${ProjectName}/${UserName}/credentials"
+      Description: !Sub "${UserName} 用 AWS 認証情報"
       SecretString: !Sub
-        - '{"access_key_id":"${AccessKeyId}","secret_access_key":"${SecretKey}","region":"${AWS::Region}"}'
+        - '{"access_key_id":"${AccessKeyId}","secret_access_key":"${SecretKey}","region":"${AWS::Region}","inference_profile_arn":"${ProfileArn}"}'
         - AccessKeyId: !Ref AppUserAccessKey
           SecretKey: !GetAtt AppUserAccessKey.SecretAccessKey
+          ProfileArn: !GetAtt InferenceProfile.InferenceProfileArn
+
+  # ============================================================
+  # 使用量ガード: CloudWatch Alarm → SNS → Lambda → キー無効化
+  # 推論プロファイル単位のメトリクスで監視
+  # ============================================================
+  UsageGuardTopic:
+    Type: AWS::SNS::Topic
+    Condition: ShouldEnableUsageGuard
+    Properties:
+      TopicName: !Sub "${ProjectName}-${UserName}-usage-guard"
+
+  UsageGuardLambdaRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldEnableUsageGuard
+    Properties:
+      RoleName: !Sub "${ProjectName}-${UserName}-guard-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DisableAccessKey
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:UpdateAccessKey
+                  - iam:ListAccessKeys
+                Resource: !GetAtt AppUser.Arn
+
+  UsageGuardFunction:
+    Type: AWS::Lambda::Function
+    Condition: ShouldEnableUsageGuard
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${UserName}-guard"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt UsageGuardLambdaRole.Arn
+      Environment:
+        Variables:
+          TARGET_USER_NAME: !Ref AppUser
+      Code:
+        ZipFile: |
+          import json, logging, os, boto3
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          iam = boto3.client("iam")
+
+          def handler(event, context):
+              logger.info("Event: %s", json.dumps(event))
+              user_name = os.environ["TARGET_USER_NAME"]
+
+              for record in event.get("Records", []):
+                  msg = json.loads(record["Sns"]["Message"])
+                  if msg.get("NewStateValue") != "ALARM":
+                      logger.info("Not ALARM state, skipping.")
+                      return
+
+              resp = iam.list_access_keys(UserName=user_name)
+              disabled = []
+              for key in resp["AccessKeyMetadata"]:
+                  if key["Status"] == "Active":
+                      iam.update_access_key(
+                          UserName=user_name,
+                          AccessKeyId=key["AccessKeyId"],
+                          Status="Inactive",
+                      )
+                      disabled.append(key["AccessKeyId"])
+                      logger.info("Disabled key: %s", key["AccessKeyId"])
+
+              return {"disabled_keys": disabled}
+
+  UsageGuardSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: ShouldEnableUsageGuard
+    Properties:
+      TopicArn: !Ref UsageGuardTopic
+      Protocol: lambda
+      Endpoint: !GetAtt UsageGuardFunction.Arn
+
+  UsageGuardLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: ShouldEnableUsageGuard
+    Properties:
+      FunctionName: !Ref UsageGuardFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref UsageGuardTopic
+
+  # CloudWatch Alarm — 推論プロファイル単位の Invocations 数
+  BedrockInvocationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: ShouldEnableUsageGuard
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${UserName}-token-limit"
+      AlarmDescription: !Sub "${UserName} の Bedrock トークン使用量が上限超過"
+      Namespace: AWS/Bedrock
+      MetricName: InputTokenCount
+      Dimensions:
+        - Name: InferenceProfileArn
+          Value: !GetAtt InferenceProfile.InferenceProfileArn
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: !Ref MonthlyTokenLimit
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref UsageGuardTopic
 
 Outputs:
+  InferenceProfileArn:
+    Description: >
+      Bedrock 推論プロファイル ARN。
+      アプリの bedrock_model_id にこの値を設定する。
+    Value: !GetAtt InferenceProfile.InferenceProfileArn
+
+  InferenceProfileId:
+    Description: 推論プロファイル ID
+    Value: !GetAtt InferenceProfile.InferenceProfileId
+
   AppUserArn:
-    Description: アプリ用 IAM ユーザー ARN
+    Description: IAM ユーザー ARN
     Value: !GetAtt AppUser.Arn
 
   AccessKeyId:
-    Description: >
-      アクセスキー ID。アプリの「AWS 設定 → アクセスキー ID」に入力。
-      ※ CreateAccessKey=true の場合のみ出力
+    Description: アクセスキー ID
     Condition: ShouldCreateAccessKey
     Value: !Ref AppUserAccessKey
 
   SecretAccessKey:
-    Description: >
-      シークレットアクセスキー。アプリの「AWS 設定 → シークレットアクセスキー」に入力。
-      ※ この値はスタック作成時のみ表示されます。紛失した場合は再作成が必要です。
+    Description: シークレットアクセスキー（スタック作成時のみ表示）
     Condition: ShouldCreateAccessKey
     Value: !GetAtt AppUserAccessKey.SecretAccessKey
 
   SecretArn:
-    Description: Secrets Manager に保管された認証情報の ARN
+    Description: Secrets Manager ARN
     Condition: ShouldCreateAccessKey
     Value: !Ref AppUserSecret
 
@@ -247,12 +385,14 @@ Outputs:
   AppConfigSummary:
     Description: アプリ設定サマリー
     Value: !Sub |
-      === アプリへの設定方法 ===
-      【Bedrock 利用】
+      === ${UserName} のアプリ設定 ===
+      【Bedrock】
         - バックエンド: AWS Bedrock
+        - モデル ID（推論プロファイル）: ${InferenceProfile.InferenceProfileArn} を使用
         - リージョン: ${AWS::Region}
-        - 認証: アクセスキー or プロファイル
-      【Transcribe 利用】
+      【Transcribe】
         - バックエンド: AWS Transcribe
         - リージョン: ${AWS::Region}
-        - 言語: ja-JP
+      【使用量ガード】
+        - 月間トークン上限: ${MonthlyTokenLimit}
+        - 超過時: アクセスキー自動無効化

@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Screen Audio Recorder - vLLM 推論サーバー
-  GPU インスタンス (g5.xlarge) に vLLM をデプロイし、
-  Whisper 音声文字起こしと LLM テキスト後処理を提供する。
+  Screen Audio Recorder - vLLM 推論サーバー (G4dn + Docker Compose)
+  GPU インスタンス (g4dn.xlarge / T4 16GB VRAM) に vLLM をコンテナでデプロイ。
+  Whisper large-v3（精度優先）+ LLM（残り VRAM でコンテキスト最大化）。
+  SSM State Manager で OS 初期デプロイを自動実行。UserData は不使用。
 
 Parameters:
   ProjectName:
@@ -12,61 +13,81 @@ Parameters:
 
   InstanceType:
     Type: String
-    Default: g5.xlarge
+    Default: g4dn.xlarge
     AllowedValues:
-      - g5.xlarge
-      - g5.2xlarge
-      - g5.4xlarge
-      - g6.xlarge
-      - g6.2xlarge
+      - g4dn.xlarge
+      - g4dn.2xlarge
     Description: >
-      GPU インスタンスタイプ。
-      g5.xlarge: A10G 24GB VRAM（Whisper Large + 7B LLM に十分）
-      g5.2xlarge: A10G 24GB + vCPU/RAM 増強
-      g5.4xlarge: A10G 24GB + さらに vCPU/RAM 増強
+      g4dn.xlarge: T4 16GB VRAM, 4 vCPU, 16GB RAM
+      g4dn.2xlarge: T4 16GB VRAM, 8 vCPU, 32GB RAM
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: 既存 VPC ID
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: インスタンスを配置するサブネット ID
+
+  AllowedCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+    Description: >
+      API アクセスを許可する CIDR。VPC 内部のみなら VPC CIDR を指定。
 
   KeyPairName:
     Type: AWS::EC2::KeyPair::KeyName
-    Description: SSH 接続用のキーペア名
+    Description: SSH 接続用キーペア名
 
   EbsVolumeSize:
     Type: Number
-    Default: 100
+    Default: 80
     MinValue: 50
-    Description: EBS ボリュームサイズ (GB)。モデルファイル格納のため 100GB 推奨。
+    Description: EBS (GB)。Docker イメージ + モデルキャッシュ用。
 
-  VllmModelWhisper:
+  WhisperModel:
     Type: String
     Default: openai/whisper-large-v3
-    Description: vLLM で読み込む Whisper モデル (HuggingFace ID)
+    Description: Whisper モデル (HuggingFace ID)。精度優先。VRAM ≈ 5GB。
 
-  VllmModelLlm:
+  LlmModel:
+    Type: String
+    Default: Qwen/Qwen2.5-3B-Instruct
+    Description: >
+      LLM モデル。残り VRAM ≈ 10GB に収まるモデル。空なら Whisper のみ。
+
+  LlmMaxModelLen:
+    Type: Number
+    Default: 16384
+    Description: LLM 最大コンテキスト長（トークン数）。残り VRAM で最大化。
+
+  HuggingFaceToken:
     Type: String
     Default: ""
-    Description: >
-      vLLM で読み込む LLM モデル (HuggingFace ID)。
-      空の場合は Whisper のみ起動。例: meta-llama/Llama-3.1-8B-Instruct
+    NoEcho: true
+    Description: HuggingFace トークン（ゲート付きモデル用）。不要なら空欄。
 
   UseSpotInstance:
     Type: String
-    Default: "false"
+    Default: "true"
     AllowedValues:
       - "true"
       - "false"
-    Description: スポットインスタンスを使用するか（コスト削減、中断リスクあり）
+    Description: スポットインスタンス使用（G4dn は ~70% 割引）
 
 Conditions:
   UseSpot: !Equals [!Ref UseSpotInstance, "true"]
-  HasLlmModel: !Not [!Equals [!Ref VllmModelLlm, ""]]
+  HasLlmModel: !Not [!Equals [!Ref LlmModel, ""]]
+  HasHfToken: !Not [!Equals [!Ref HuggingFaceToken, ""]]
 
 Resources:
   # ============================================================
-  # IAM ロール（EC2 用）
+  # IAM ロール（EC2 — SSM Agent 用）
   # ============================================================
   VllmInstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${ProjectName}-vllm-instance-role"
+      RoleName: !Sub "${ProjectName}-vllm-role"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -75,19 +96,7 @@ Resources:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        # SSM セッションマネージャーでの接続を許可（SSH 不要な管理）
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-      Policies:
-        - PolicyName: VllmCloudWatchLogs
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ec2/${ProjectName}-vllm*"
 
   VllmInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -96,18 +105,41 @@ Resources:
         - !Ref VllmInstanceRole
 
   # ============================================================
-  # Elastic IP（固定 IP）
+  # セキュリティグループ
   # ============================================================
-  VllmElasticIp:
-    Type: AWS::EC2::EIP
+  VllmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      Domain: vpc
+      GroupDescription: !Sub "${ProjectName} vLLM server"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: !Ref AllowedCidr
+          Description: Whisper API
+        - IpProtocol: tcp
+          FromPort: 8001
+          ToPort: 8001
+          CidrIp: !Ref AllowedCidr
+          Description: LLM API
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCidr
+          Description: SSH
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: "0.0.0.0/0"
+          Description: All outbound
       Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-vllm-eip"
+          Value: !Sub "${ProjectName}-vllm-sg"
+        - Key: Project
+          Value: !Ref ProjectName
 
   # ============================================================
-  # EC2 インスタンス
+  # EC2 インスタンス（UserData なし — State Manager でデプロイ）
   # ============================================================
   VllmInstance:
     Type: AWS::EC2::Instance
@@ -115,11 +147,9 @@ Resources:
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPairName
       IamInstanceProfile: !Ref VllmInstanceProfile
-      SubnetId:
-        Fn::ImportValue: !Sub "${ProjectName}-PublicSubnetId"
+      SubnetId: !Ref SubnetId
       SecurityGroupIds:
-        - Fn::ImportValue: !Sub "${ProjectName}-VllmSgId"
-      # Deep Learning AMI (Ubuntu 22.04) - NVIDIA ドライバ・CUDA プリインストール
+        - !Ref VllmSecurityGroup
       ImageId: !FindInMap [RegionAmiMap, !Ref "AWS::Region", Ami]
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
@@ -137,98 +167,147 @@ Resources:
               SpotInstanceType: persistent
               InstanceInterruptionBehavior: stop
           - !Ref "AWS::NoValue"
-      UserData:
-        Fn::Base64: !Sub
-          - |
-            #!/bin/bash
-            set -euo pipefail
-
-            # ログ出力
-            exec > >(tee /var/log/user-data.log) 2>&1
-            echo "=== vLLM セットアップ開始: $(date) ==="
-
-            # システムアップデート
-            apt-get update -y
-            apt-get install -y python3-pip python3-venv nginx certbot python3-certbot-nginx
-
-            # vLLM インストール
-            python3 -m venv /opt/vllm-env
-            source /opt/vllm-env/bin/activate
-            pip install --upgrade pip
-            pip install vllm
-
-            # vLLM サービス設定（Whisper 用）
-            cat > /etc/systemd/system/vllm-whisper.service << 'EOF'
-            [Unit]
-            Description=vLLM Whisper Server
-            After=network.target
-
-            [Service]
-            Type=simple
-            User=root
-            WorkingDirectory=/opt
-            Environment="PATH=/opt/vllm-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-            ExecStart=/opt/vllm-env/bin/python -m vllm.entrypoints.openai.api_server \
-              --model ${WhisperModel} \
-              --host 0.0.0.0 \
-              --port 8000 \
-              --max-model-len 448 \
-              --gpu-memory-utilization 0.4
-            Restart=always
-            RestartSec=10
-
-            [Install]
-            WantedBy=multi-user.target
-            EOF
-
-            systemctl daemon-reload
-            systemctl enable vllm-whisper
-            systemctl start vllm-whisper
-
-            ${LlmServiceBlock}
-
-            echo "=== vLLM セットアップ完了: $(date) ==="
-          - WhisperModel: !Ref VllmModelWhisper
-            LlmServiceBlock: !If
-              - HasLlmModel
-              - !Sub |
-                  # vLLM サービス設定（LLM 用）
-                  cat > /etc/systemd/system/vllm-llm.service << 'LLMEOF'
-                  [Unit]
-                  Description=vLLM LLM Server
-                  After=network.target
-
-                  [Service]
-                  Type=simple
-                  User=root
-                  WorkingDirectory=/opt
-                  Environment="PATH=/opt/vllm-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                  ExecStart=/opt/vllm-env/bin/python -m vllm.entrypoints.openai.api_server \
-                    --model ${VllmModelLlm} \
-                    --host 0.0.0.0 \
-                    --port 8001 \
-                    --gpu-memory-utilization 0.5
-                  Restart=always
-                  RestartSec=10
-
-                  [Install]
-                  WantedBy=multi-user.target
-                  LLMEOF
-
-                  systemctl daemon-reload
-                  systemctl enable vllm-llm
-                  systemctl start vllm-llm
-              - ""
       Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-vllm-server"
+          Value: !Sub "${ProjectName}-vllm"
+        - Key: Project
+          Value: !Ref ProjectName
 
-  # EIP をインスタンスに関連付け
-  VllmEipAssociation:
-    Type: AWS::EC2::EIPAssociation
+  # ============================================================
+  # SSM State Manager アソシエーション
+  # インスタンス起動時に docker-compose.yml を配置し起動する。
+  # restart: unless-stopped により以降の再起動でも自動復帰。
+  # ============================================================
+  VllmDeployAssociation:
+    Type: AWS::SSM::Association
     Properties:
-      InstanceId: !Ref VllmInstance
-      AllocationId: !GetAtt VllmElasticIp.AllocationId
+      Name: AWS-RunShellScript
+      AssociationName: !Sub "${ProjectName}-vllm-deploy"
+      Targets:
+        - Key: InstanceIds
+          Values:
+            - !Ref VllmInstance
+      Parameters:
+        commands:
+          - !Sub
+            - |
+              #!/bin/bash
+              set -euo pipefail
+              
+              # 既にコンテナ起動済みならスキップ
+              if docker compose -f /opt/vllm/docker-compose.yml ps --status running 2>/dev/null | grep -q "whisper"; then
+                echo "vLLM containers already running. Skipping."
+                exit 0
+              fi
+
+              mkdir -p /opt/vllm
+              ${HfTokenExport}
+
+              cat > /opt/vllm/docker-compose.yml << 'EOF'
+              services:
+                whisper:
+                  image: vllm/vllm-openai:latest
+                  runtime: nvidia
+                  ports:
+                    - "8000:8000"
+                  volumes:
+                    - model-cache:/root/.cache/huggingface
+                  environment:
+                    - NVIDIA_VISIBLE_DEVICES=all
+                    - HF_TOKEN=${HuggingFaceToken}
+                  command:
+                    - --model
+                    - "${WhisperModel}"
+                    - --host
+                    - "0.0.0.0"
+                    - --port
+                    - "8000"
+                    - --max-model-len
+                    - "448"
+                    - --gpu-memory-utilization
+                    - "0.3"
+                    - --dtype
+                    - float16
+                  deploy:
+                    resources:
+                      reservations:
+                        devices:
+                          - driver: nvidia
+                            count: 1
+                            capabilities: [gpu]
+                  restart: unless-stopped
+                  healthcheck:
+                    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+                    interval: 30s
+                    timeout: 10s
+                    retries: 5
+                    start_period: 120s
+              EOF
+
+              # LLM サービス追加
+              if [ -n "${LlmModelParam}" ]; then
+                cat >> /opt/vllm/docker-compose.yml << 'LLMEOF'
+                llm:
+                  image: vllm/vllm-openai:latest
+                  runtime: nvidia
+                  ports:
+                    - "8001:8001"
+                  volumes:
+                    - model-cache:/root/.cache/huggingface
+                  environment:
+                    - NVIDIA_VISIBLE_DEVICES=all
+                    - HF_TOKEN=${HuggingFaceToken}
+                  command:
+                    - --model
+                    - "${LlmModelParam}"
+                    - --host
+                    - "0.0.0.0"
+                    - --port
+                    - "8001"
+                    - --max-model-len
+                    - "${LlmMaxModelLenParam}"
+                    - --gpu-memory-utilization
+                    - "0.65"
+                    - --dtype
+                    - float16
+                  deploy:
+                    resources:
+                      reservations:
+                        devices:
+                          - driver: nvidia
+                            count: 1
+                            capabilities: [gpu]
+                  restart: unless-stopped
+                  healthcheck:
+                    test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+                    interval: 30s
+                    timeout: 10s
+                    retries: 5
+                    start_period: 180s
+                  depends_on:
+                    whisper:
+                      condition: service_healthy
+              LLMEOF
+              fi
+
+              echo "" >> /opt/vllm/docker-compose.yml
+              echo "volumes:" >> /opt/vllm/docker-compose.yml
+              echo "  model-cache:" >> /opt/vllm/docker-compose.yml
+
+              cd /opt/vllm
+              docker compose pull
+              docker compose up -d
+            - HfTokenExport: !If
+                - HasHfToken
+                - !Sub "export HF_TOKEN=${HuggingFaceToken}"
+                - "# No HF token"
+              LlmModelParam: !Ref LlmModel
+              LlmMaxModelLenParam: !Ref LlmMaxModelLen
+        workingDirectory:
+          - /opt/vllm
+      # インスタンス起動時に1回実行（rate 指定なし = 関連付け時に実行）
+      ApplyOnlyAtCronInterval: false
+      WaitForSuccessTimeoutSeconds: 600
 
   # ============================================================
   # CloudWatch ロググループ
@@ -237,16 +316,15 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/ec2/${ProjectName}-vllm"
-      RetentionInDays: 14
+      RetentionInDays: 7
 
 # ============================================================
-# AMI マッピング（Deep Learning AMI - Ubuntu 22.04）
+# AMI マッピング (Deep Learning Base GPU AMI - Ubuntu 22.04)
+# NVIDIA Driver + Docker + nvidia-container-toolkit プリインストール
 # ============================================================
 Mappings:
   RegionAmiMap:
     ap-northeast-1:
-      # Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)
-      # 最新の AMI ID は AWS コンソールで確認してください
       Ami: ami-0b828c1c5ac3f13ee
     us-east-1:
       Ami: ami-0a0c8eebcdd6dcbd0
@@ -256,29 +334,23 @@ Mappings:
       Ami: ami-0a0c8eebcdd6dcbd0
 
 Outputs:
-  VllmInstanceId:
+  InstanceId:
     Description: vLLM EC2 インスタンス ID
     Value: !Ref VllmInstance
 
-  VllmPublicIp:
-    Description: vLLM サーバーの固定パブリック IP
-    Value: !Ref VllmElasticIp
-
-  VllmWhisperEndpoint:
+  WhisperEndpoint:
     Description: >
-      vLLM Whisper エンドポイント URL。
-      アプリの「文字起こし設定 → vLLM エンドポイント」に入力。
-    Value: !Sub "http://${VllmElasticIp}:8000/v1/audio/transcriptions"
+      Whisper API。アプリの「文字起こし → vLLM エンドポイント」に設定。
+    Value: !Sub "http://${VllmInstance.PrivateIp}:8000/v1/audio/transcriptions"
 
-  VllmLlmEndpoint:
+  LlmEndpoint:
     Description: >
-      vLLM LLM エンドポイント URL（LLM モデル指定時のみ有効）。
-      アプリの「LLM 設定 → API エンドポイント」に入力。
+      LLM API。アプリの「LLM → API エンドポイント」に設定。
     Value: !If
       - HasLlmModel
-      - !Sub "http://${VllmElasticIp}:8001/v1/chat/completions"
+      - !Sub "http://${VllmInstance.PrivateIp}:8001/v1/chat/completions"
       - "N/A (LLM モデル未指定)"
 
-  SshCommand:
-    Description: SSH 接続コマンド
-    Value: !Sub "ssh -i ${KeyPairName}.pem ubuntu@${VllmElasticIp}"
+  StateManagerAssociationId:
+    Description: SSM State Manager アソシエーション ID
+    Value: !Ref VllmDeployAssociation

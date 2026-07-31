@@ -182,7 +182,7 @@ pyinstaller screen_audio_recorder.spec --noconfirm
 
 > **注**: PowerShell で `.\.venv\Scripts\` のパスが認識されない場合はフルパスで実行:
 > ```powershell
-> & "C:\Users\user2\Dropbox\huangシステム設計書\APP開発\work-type-0\.venv\Scripts\pyinstaller.exe" screen_audio_recorder.spec --noconfirm
+> & ".\.venv\Scripts\pyinstaller.exe" screen_audio_recorder.spec --noconfirm
 > ```
 
 ビルド成果物は `dist/screen-audio-recorder/` に出力されます。

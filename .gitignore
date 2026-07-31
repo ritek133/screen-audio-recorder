@@ -33,6 +33,9 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
+# Egg-info
+*.egg-info/
+
 # Infra secrets
 infra/**/.env
 *.env
