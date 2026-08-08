@@ -13,7 +13,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
 
-from screen_audio_recorder.models import LlmSettings, RecordingMode, RecordingRegion
+from screen_audio_recorder.models import AwsSettings, LlmSettings, RecordingMode, RecordingRegion
 
 if TYPE_CHECKING:
     from screen_audio_recorder.audio_capture import AudioCapture
@@ -131,55 +131,47 @@ class MainWindow:
         record_tab = ttk.Frame(self._notebook, padding=4)
         self._notebook.add(record_tab, text="録画")
 
-        # --- コントロールパネル ---
-        control_frame = ttk.LabelFrame(record_tab, text="録画コントロール", padding=6)
-        control_frame.pack(fill=tk.X, pady=(0, 6))
+        # --- コントロールパネル（1行コンパクト配置）---
+        control_frame = ttk.LabelFrame(record_tab, text="録画コントロール", padding=4)
+        control_frame.pack(fill=tk.X, pady=(0, 4))
 
-        # モード選択
-        mode_frame = ttk.Frame(control_frame)
-        mode_frame.pack(fill=tk.X, pady=(0, 4))
+        # 1行目: モード + マイク + ボタン
+        row_frame = ttk.Frame(control_frame)
+        row_frame.pack(fill=tk.X)
 
-        ttk.Label(mode_frame, text="録画モード:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(row_frame, text="モード:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Radiobutton(
-            mode_frame,
-            text="画面 + 音声",
+            row_frame,
+            text="画面+音声",
             variable=self._mode_var,
             value=RecordingMode.SCREEN_AND_AUDIO.value,
-        ).pack(side=tk.LEFT, padx=(0, 8))
+        ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Radiobutton(
-            mode_frame,
+            row_frame,
             text="音声のみ",
             variable=self._mode_var,
             value=RecordingMode.AUDIO_ONLY.value,
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 8))
 
-        # マイクデバイス選択
-        mic_frame = ttk.Frame(control_frame)
-        mic_frame.pack(fill=tk.X, pady=(0, 4))
-
-        ttk.Label(mic_frame, text="マイク:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(row_frame, text="マイク:").pack(side=tk.LEFT, padx=(0, 4))
         self._mic_combo = ttk.Combobox(
-            mic_frame,
+            row_frame,
             textvariable=self._mic_var,
             state="readonly",
-            width=40,
+            width=25,
         )
-        self._mic_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # 録画ボタン
-        btn_frame = ttk.Frame(control_frame)
-        btn_frame.pack(fill=tk.X)
+        self._mic_combo.pack(side=tk.LEFT, padx=(0, 8))
 
         self._start_btn = ttk.Button(
-            btn_frame,
-            text="録画開始",
+            row_frame,
+            text="⏺ 録画開始",
             command=self._on_start,
         )
-        self._start_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self._start_btn.pack(side=tk.LEFT, padx=(0, 4))
 
         self._stop_btn = ttk.Button(
-            btn_frame,
-            text="録画停止",
+            row_frame,
+            text="⏹ 録画停止",
             command=self._on_stop,
             state=tk.DISABLED,
         )
@@ -192,6 +184,7 @@ class MainWindow:
             record_tab,
             self._memo_store,
             text_post_processor=getattr(self._recorder_controller, "_text_post_processor", None),
+            transcriber=getattr(self._recorder_controller, "_transcriber", None),
             root=self._root,
         )
         self._memo_list_view.frame.pack(fill=tk.BOTH, expand=True)
@@ -221,10 +214,10 @@ class MainWindow:
         )
         self._notebook.add(self._about_tab.frame, text="このアプリについて")
 
-    def _on_llm_settings_changed_internal(self, settings: LlmSettings) -> None:
+    def _on_llm_settings_changed_internal(self, settings: LlmSettings, aws_settings: AwsSettings | None = None) -> None:
         """LLM 設定変更時の内部ハンドラ."""
         if self._on_llm_settings_changed is not None:
-            self._on_llm_settings_changed(settings)
+            self._on_llm_settings_changed(settings, aws_settings)
 
     # ------------------------------------------------------------------
     # マイクデバイス読み込み
@@ -257,12 +250,12 @@ class MainWindow:
         mode = RecordingMode(self._mode_var.get())
         if mode == RecordingMode.SCREEN_AND_AUDIO:
             self._region_overlay.show()
-            self._start_btn.config(text="録画開始")
-            self._stop_btn.config(text="録画停止")
+            self._start_btn.config(text="⏺ 録画開始")
+            self._stop_btn.config(text="⏹ 録画停止")
         else:
             self._region_overlay.hide()
-            self._start_btn.config(text="録音開始")
-            self._stop_btn.config(text="録音停止")
+            self._start_btn.config(text="⏺ 録音開始")
+            self._stop_btn.config(text="⏹ 録音停止")
 
     def _on_start(self) -> None:
         """録画開始ボタンのイベントハンドラ."""

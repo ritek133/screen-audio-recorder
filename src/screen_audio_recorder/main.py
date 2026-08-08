@@ -128,7 +128,7 @@ def main() -> None:
     from screen_audio_recorder.file_store import FileStore
     from screen_audio_recorder.gui.main_window import MainWindow
     from screen_audio_recorder.llm_client import LlmClient
-    from screen_audio_recorder.llm_settings_store import load_settings as load_llm_settings
+    from screen_audio_recorder.llm_settings_store import load_all_settings as _load_all_settings, load_settings as load_llm_settings
     from screen_audio_recorder.memo_store import MemoStore
     from screen_audio_recorder.recorder_controller import RecorderController
     from screen_audio_recorder.screen_capture import ScreenCapture
@@ -139,7 +139,7 @@ def main() -> None:
 
     # tkinter ルートウィンドウを作成
     root = tk.Tk()
-    root.minsize(800, 600)
+    root.minsize(640, 480)
 
     # コンポーネントを初期化
     error_notifier = ErrorNotifier(root=root)
@@ -150,18 +150,20 @@ def main() -> None:
     video_encoder = VideoEncoder(error_notifier=error_notifier)
 
     # LLM 設定を読み込み（Whisper モデルサイズも含む）
-    llm_settings = load_llm_settings()
+    llm_settings, transcriber_settings, aws_settings = _load_all_settings()
 
     transcriber = Transcriber(
         model_size=llm_settings.whisper_model_size,
         error_notifier=error_notifier,
         memo_store=memo_store,
         lazy_load=True,  # モデルロードを遅延させる（メインウィンドウ表示後にバックグラウンドで実行）
+        transcriber_settings=transcriber_settings,
+        aws_settings=aws_settings,
     )
     theme_generator = ThemeGeneratorService()
 
     # LLM コンポーネントを初期化
-    llm_client = LlmClient(llm_settings)
+    llm_client = LlmClient(llm_settings, aws_settings)
     text_post_processor = TextPostProcessor(
         llm_client=llm_client,
         theme_generator_fallback=theme_generator,
@@ -183,8 +185,8 @@ def main() -> None:
         )
 
     # LLM 設定変更時のコールバック
-    def on_llm_settings_changed(new_settings):
-        llm_client.reload(new_settings)
+    def on_llm_settings_changed(new_settings, new_aws_settings=None):
+        llm_client.reload(new_settings, new_aws_settings)
         text_post_processor.update_settings(new_settings)
         logger.info("LLM 設定を更新しました。バックエンド: %s", new_settings.backend.value)
 

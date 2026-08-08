@@ -23,6 +23,62 @@ except ImportError:
     _BOTO3_AVAILABLE = False
 
 
+def _get_ca_bundle() -> str | None:
+    """SSL CA バンドルのパスを取得する.
+
+    環境変数 AWS_CA_BUNDLE が設定されていればそれを使い、
+    なければ certifi + Windows 証明書ストアのマージ証明書を生成する。
+    """
+    import os
+
+    # 環境変数で明示指定されていればそれを使用
+    if os.environ.get("AWS_CA_BUNDLE"):
+        return None  # boto3 が環境変数を自動的に参照する
+
+    # Windows の場合、システム証明書ストアから CA バンドルを生成
+    import sys
+    if sys.platform != "win32":
+        return None
+
+    try:
+        import ssl
+        import tempfile
+        from pathlib import Path
+
+        # キャッシュ先: アプリデータフォルダ
+        cache_dir = Path.home() / "Documents" / "screen-audio-recorder"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        ca_bundle_path = cache_dir / "ca-bundle.pem"
+
+        # certifi のバンドルを読み込み
+        try:
+            import certifi
+            certifi_certs = Path(certifi.where()).read_text(encoding="utf-8")
+        except (ImportError, OSError):
+            certifi_certs = ""
+
+        # Windows 証明書ストアから取得
+        win_certs = []
+        for store_name in ("ROOT", "CA"):
+            try:
+                for cert, _encoding, _trust in ssl.enum_certificates(store_name):
+                    pem = ssl.DER_cert_to_PEM_cert(cert)
+                    win_certs.append(pem)
+            except (OSError, PermissionError):
+                pass
+
+        if win_certs:
+            combined = certifi_certs + "\n" + "\n".join(win_certs)
+            ca_bundle_path.write_text(combined, encoding="utf-8")
+            logger.debug("CA バンドルを生成しました: %s（%d 件のシステム証明書を追加）", ca_bundle_path, len(win_certs))
+            return str(ca_bundle_path)
+
+    except Exception as exc:
+        logger.debug("CA バンドル生成に失敗: %s", exc)
+
+    return None
+
+
 def is_boto3_available() -> bool:
     """boto3 が利用可能かどうかを返す."""
     return _BOTO3_AVAILABLE
@@ -91,6 +147,11 @@ def create_boto3_client(service_name: str, aws_settings: AwsSettings, **kwargs) 
             retries={"max_attempts": 3, "mode": "adaptive"},
         )
         kwargs.setdefault("config", config)
+
+    # SSL CA バンドルを設定（プロキシ環境対応）
+    ca_bundle = _get_ca_bundle()
+    if ca_bundle:
+        kwargs.setdefault("verify", ca_bundle)
 
     client = session.client(service_name, **kwargs)
     logger.debug(

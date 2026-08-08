@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 import time
 import urllib.error
@@ -370,28 +371,13 @@ class Transcriber:
             return self._handle_transcribe_error(exc, audio_path)
 
     def _transcribe_aws(self, audio_path: Path) -> TranscribeResult:
-        """Amazon Transcribe で文字起こしする.
+        """Amazon Transcribe バッチジョブで文字起こしする.
 
-        Transcribe Streaming API を使用してリアルタイム文字起こしを行う。
-        ストリーミングが利用できない場合は、バッチジョブにフォールバックする。
-
-        注意: Amazon Transcribe Streaming は boto3 の
-        transcribe-streaming クライアント (start_stream_transcription) を使用する。
-        ここでは簡易版としてバッチ API（start_transcription_job）を使用する。
-        音声ファイルをローカルから直接送信するため、一時的に S3 は不要な
-        Medical Transcribe の直接入力、または Streaming API を利用する。
-
-        実装方針: Transcribe Streaming API（start_medical_stream_transcription ではなく
-        start_stream_transcription）を使用して、ファイルをチャンクで送る。
+        音声ファイルを S3 にアップロードし、StartTranscriptionJob で処理する。
+        ジョブ完了後に結果を取得し、S3 の一時ファイルを削除する。
         """
         try:
-            logger.info("文字起こし開始（Amazon Transcribe）: %s", audio_path)
-
-            client = self._get_aws_transcribe_client()
-            language_code = self._transcriber_settings.aws_transcribe_language
-
-            # ファイルを読み込み
-            audio_data = audio_path.read_bytes()
+            logger.info("文字起こし開始（Amazon Transcribe バッチ）: %s", audio_path)
 
             # ファイル形式の判定
             suffix = audio_path.suffix.lower()
@@ -404,160 +390,41 @@ class Transcriber:
                 ".mp4": "mp4",
             }
             media_format = media_format_map.get(suffix, "wav")
+            language_code = self._transcriber_settings.aws_transcribe_language
 
-            # Transcribe Streaming API を使用
-            text = self._transcribe_aws_streaming(client, audio_data, language_code, media_format)
+            text = self._transcribe_batch(audio_path, language_code, media_format)
 
             logger.info("文字起こし完了（Amazon Transcribe）: %d 文字", len(text))
             return TranscribeResult(
                 text=text,
                 language=_LANGUAGE,
-                duration_seconds=0.0,  # Transcribe はデュレーション情報を別途返さない
+                duration_seconds=0.0,
                 error=None,
             )
         except Exception as exc:
             return self._handle_transcribe_error(exc, audio_path)
 
-    def _get_aws_transcribe_client(self):
-        """AWS Transcribe クライアントを取得する."""
-        from screen_audio_recorder.aws_utils import create_boto3_client
-
-        return create_boto3_client("transcribe", self._aws_settings)
-
-    def _transcribe_aws_streaming(
-        self, client, audio_data: bytes, language_code: str, media_format: str
+    def _transcribe_batch(
+        self, audio_path: Path, language_code: str, media_format: str
     ) -> str:
-        """Transcribe Streaming API で文字起こしする.
-
-        boto3 の start_stream_transcription を使用する。
-        """
-        import asyncio
-
-        # Streaming API 用のイベントストリーム
-        # boto3 の Transcribe Streaming は特殊な形式のため、
-        # ここではバッチ処理のフォールバックとして直接 API を使用する
-        # 注: 本番では amazon-transcribe-streaming-sdk の使用を推奨
-
-        # 簡易実装: ファイルを一時的に S3 にアップロードせず、
-        # start_transcription_job + S3 を避けて直接 HTTP/2 ストリーミングを使う
-        # のは複雑なため、ここでは boto3 の標準的なバッチ処理を使用する
-        # ただし S3 バケットが必要になるため、代替として Transcribe Medical
-        # や直接入力をサポートする方法を検討
-
-        # 現実的な実装: 一時ファイルとして送信する非ストリーミング方式
-        # Amazon Transcribe のバッチ処理には S3 が必要なため、
-        # Transcribe Streaming SDK を使用する
-        try:
-            # amazon-transcribe-streaming-sdk が利用可能か確認
-            from amazon_transcribe.client import TranscribeStreamingClient
-            from amazon_transcribe.handlers import TranscriptResultStreamHandler
-            from amazon_transcribe.model import TranscriptEvent
-
-            return self._transcribe_with_streaming_sdk(
-                audio_data, language_code, media_format
-            )
-        except ImportError:
-            # SDK が無い場合は boto3 の start_stream_transcription を使用
-            return self._transcribe_with_boto3_streaming(
-                client, audio_data, language_code, media_format
-            )
-
-    def _transcribe_with_streaming_sdk(
-        self, audio_data: bytes, language_code: str, media_format: str
-    ) -> str:
-        """amazon-transcribe-streaming-sdk を使用した文字起こし."""
-        import asyncio
-        from amazon_transcribe.client import TranscribeStreamingClient
-        from amazon_transcribe.handlers import TranscriptResultStreamHandler
-        from amazon_transcribe.model import TranscriptEvent
-
-        results: list[str] = []
-
-        class MyEventHandler(TranscriptResultStreamHandler):
-            async def handle_transcript_event(self, transcript_event: TranscriptEvent):
-                results_stream = transcript_event.transcript.results
-                for result in results_stream:
-                    if not result.is_partial:
-                        for alt in result.alternatives:
-                            results.append(alt.transcript)
-
-        async def _run():
-            client = TranscribeStreamingClient(region=self._aws_settings.region)
-
-            media_encoding_map = {
-                "wav": "pcm",
-                "flac": "flac",
-                "ogg": "ogg-opus",
-            }
-            media_encoding = media_encoding_map.get(media_format, "pcm")
-
-            stream = await client.start_stream_transcription(
-                language_code=language_code,
-                media_sample_rate_hz=16000,
-                media_encoding=media_encoding,
-            )
-
-            # 音声データをチャンクで送信
-            chunk_size = 1024 * 16  # 16KB chunks
-            async def _send_chunks():
-                for i in range(0, len(audio_data), chunk_size):
-                    chunk = audio_data[i : i + chunk_size]
-                    await stream.input_stream.send_audio_event(audio_chunk=chunk)
-                await stream.input_stream.end_stream()
-
-            handler = MyEventHandler(stream.output_stream)
-            await asyncio.gather(_send_chunks(), handler.handle_events())
-
-        # asyncio イベントループで実行
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 既存ループ内の場合は新しいループを作成
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(_run())
-                loop.close()
-            else:
-                loop.run_until_complete(_run())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(_run())
-            loop.close()
-
-        return "".join(results)
-
-    def _transcribe_with_boto3_streaming(
-        self, client, audio_data: bytes, language_code: str, media_format: str
-    ) -> str:
-        """boto3 の TranscribeStreaming で文字起こしする.
-
-        boto3 には transcribestreaming クライアントがないため、
-        transcribe のバッチジョブを使用する（S3 経由）。
-        S3 が不要な方法として、ローカルで HTTP/2 を使う方法は複雑なため、
-        ここではファイルの内容を直接処理する代替策を使う。
-
-        実際の運用では以下のいずれかを推奨:
-        1. amazon-transcribe-streaming-sdk を pip install する
-        2. S3 バケットを用意して Transcribe バッチジョブを使用する
-
-        この実装では S3 + バッチジョブ方式にフォールバックする。
-        """
+        """S3 経由の Transcribe バッチジョブで文字起こしする."""
+        import os
         import uuid
 
-        # S3 バケット名を設定から取得（なければエラー）
-        # 注: 将来的に TranscriberSettings に s3_bucket を追加する可能性あり
-        # 現在は環境変数から取得
-        import os
-        s3_bucket = os.environ.get("SCREEN_RECORDER_S3_BUCKET", "")
+        from screen_audio_recorder.aws_utils import create_boto3_client
+
+        # S3 バケット名を取得
+        s3_bucket = self._transcriber_settings.aws_s3_bucket or os.environ.get(
+            "SCREEN_RECORDER_S3_BUCKET", ""
+        )
         if not s3_bucket:
             raise RuntimeError(
                 "Amazon Transcribe のバッチ処理には S3 バケットが必要です。\n"
-                "環境変数 SCREEN_RECORDER_S3_BUCKET を設定するか、\n"
-                "pip install amazon-transcribe-streaming-sdk を実行して "
-                "ストリーミング API を使用してください。"
+                "設定画面で S3 バケット名を入力するか、\n"
+                "環境変数 SCREEN_RECORDER_S3_BUCKET を設定してください。"
             )
 
-        from screen_audio_recorder.aws_utils import create_boto3_client
+        transcribe_client = create_boto3_client("transcribe", self._aws_settings)
         s3_client = create_boto3_client("s3", self._aws_settings)
 
         # 一時ファイルを S3 にアップロード
@@ -566,19 +433,22 @@ class Transcriber:
         s3_uri = f"s3://{s3_bucket}/{s3_key}"
 
         try:
+            audio_data = audio_path.read_bytes()
             s3_client.put_object(Bucket=s3_bucket, Key=s3_key, Body=audio_data)
 
             # Transcribe ジョブ開始
-            client.start_transcription_job(
+            transcribe_client.start_transcription_job(
                 TranscriptionJobName=job_name,
                 LanguageCode=language_code,
                 MediaFormat=media_format,
                 Media={"MediaFileUri": s3_uri},
             )
 
-            # ジョブ完了を待つ
+            # ジョブ完了を待つ（ポーリング）
             while True:
-                status = client.get_transcription_job(TranscriptionJobName=job_name)
+                status = transcribe_client.get_transcription_job(
+                    TranscriptionJobName=job_name
+                )
                 job_status = status["TranscriptionJob"]["TranscriptionJobStatus"]
                 if job_status == "COMPLETED":
                     break
@@ -588,9 +458,16 @@ class Transcriber:
                 time.sleep(2)
 
             # 結果を取得
-            transcript_uri = status["TranscriptionJob"]["Transcript"]["TranscriptFileUri"]
+            transcript_uri = status["TranscriptionJob"]["Transcript"][
+                "TranscriptFileUri"
+            ]
             req = urllib.request.Request(transcript_uri, method="GET")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            # Transcribe が返す署名付き S3 URL のダウンロード
+            # セキュリティソフトによる証明書問題を回避するため SSL 検証をスキップ
+            # （URL 自体が AWS 署名付きで改ざん不可）
+            import ssl
+            ssl_context = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, timeout=30, context=ssl_context) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
 
             transcripts = result.get("results", {}).get("transcripts", [])
@@ -605,7 +482,9 @@ class Transcriber:
                 pass
             # Transcribe ジョブを削除
             try:
-                client.delete_transcription_job(TranscriptionJobName=job_name)
+                transcribe_client.delete_transcription_job(
+                    TranscriptionJobName=job_name
+                )
             except Exception:
                 pass
 

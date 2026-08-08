@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Screen Audio Recorder - SaaS 利用リソース（ユーザー単位）
-  ユーザーごとに Bedrock 推論プロファイル + IAM ユーザー + 使用量監視を作成。
-  推論プロファイル経由で CloudWatch メトリクスによる個別使用量追跡が可能。
+  Screen Audio Recorder - SaaS ユーザーリソース（ユーザー単位）
+  Bedrock 推論プロファイル + IAM ユーザー + 使用量監視を作成。
+  共有バケット (12_saas-shared.yaml) のバケット名をパラメータで受け取る。
 
 Parameters:
   ProjectName:
@@ -26,8 +26,7 @@ Parameters:
   BedrockModelArn:
     Type: String
     Default: "arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
-    Description: >
-      推論プロファイルのソースモデル ARN。
+    Description: 推論プロファイルのソースモデル ARN
 
   EnableTranscribe:
     Type: String
@@ -37,10 +36,11 @@ Parameters:
       - "false"
     Description: Amazon Transcribe の利用を許可するか
 
-  TranscribeS3BucketName:
+  TranscribeBucketName:
     Type: String
-    Default: ""
-    Description: Transcribe 用 S3 バケット名。空なら新規作成。
+    Description: >
+      共有スタック (12_saas-shared) で作成された S3 バケット名。
+      共有スタックの Output TranscribeBucketName の値を指定。
 
   EnableUsageGuard:
     Type: String
@@ -55,26 +55,30 @@ Parameters:
     Default: 500000
     Description: 月間トークン上限。超過でアクセスキーを自動無効化。
 
+  DailyTranscribeJobLimit:
+    Type: Number
+    Default: 10
+    Description: 1日あたりの Transcribe ジョブ数上限。超過でアクセスキーを自動無効化。
+
 Conditions:
   ShouldCreateAccessKey: !Equals [!Ref CreateAccessKey, "true"]
   ShouldEnableTranscribe: !Equals [!Ref EnableTranscribe, "true"]
-  ShouldCreateS3Bucket: !And
-    - !Condition ShouldEnableTranscribe
-    - !Equals [!Ref TranscribeS3BucketName, ""]
   ShouldEnableUsageGuard: !And
     - !Condition ShouldCreateAccessKey
     - !Equals [!Ref EnableUsageGuard, "true"]
+  ShouldEnableTranscribeGuard: !And
+    - !Condition ShouldEnableTranscribe
+    - !Condition ShouldEnableUsageGuard
 
 Resources:
   # ============================================================
   # Bedrock 推論プロファイル（ユーザー単位）
-  # このプロファイル経由の呼び出しが CloudWatch で個別追跡される
   # ============================================================
   InferenceProfile:
     Type: AWS::Bedrock::ApplicationInferenceProfile
     Properties:
       InferenceProfileName: !Sub "${ProjectName}-${UserName}"
-      Description: !Sub "${UserName} 用 Bedrock 推論プロファイル"
+      Description: !Sub "Bedrock inference profile for ${UserName}"
       ModelSource:
         CopyFrom: !Ref BedrockModelArn
       Tags:
@@ -108,8 +112,8 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          # 推論プロファイル経由のみ許可
-          - Sid: AllowInferenceProfileOnly
+          # 推論プロファイル自体への呼び出しを許可
+          - Sid: AllowInferenceProfile
             Effect: Allow
             Action:
               - bedrock:InvokeModel
@@ -118,10 +122,21 @@ Resources:
               - bedrock:ConverseStream
             Resource:
               - !GetAtt InferenceProfile.InferenceProfileArn
+          # 推論プロファイル経由でのモデルアクセスを許可
+          # (Bedrock が内部的にモデルリソースにアクセスする際に必要)
+          - Sid: AllowModelViaProfile
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:Converse
+              - bedrock:ConverseStream
+            Resource:
+              - "arn:aws:bedrock:*::foundation-model/*"
             Condition:
               StringEquals:
                 bedrock:InferenceProfileArn: !GetAtt InferenceProfile.InferenceProfileArn
-          # 推論プロファイル以外の直接モデル呼び出しを拒否
+          # 推論プロファイルを経由しない直接モデルアクセスを拒否
           - Sid: DenyDirectModelAccess
             Effect: Deny
             Action:
@@ -129,11 +144,11 @@ Resources:
               - bedrock:InvokeModelWithResponseStream
               - bedrock:Converse
               - bedrock:ConverseStream
-            Resource: "*"
+            Resource:
+              - "arn:aws:bedrock:*::foundation-model/*"
             Condition:
-              StringNotEquals:
-                bedrock:InferenceProfileArn: !GetAtt InferenceProfile.InferenceProfileArn
-          # 読み取り（設定画面用）
+              "Null":
+                bedrock:InferenceProfileArn: "true"
           - Sid: BedrockReadOnly
             Effect: Allow
             Action:
@@ -156,12 +171,6 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: TranscribeStreaming
-            Effect: Allow
-            Action:
-              - transcribe:StartStreamTranscription
-              - transcribe:StartStreamTranscriptionWebSocket
-            Resource: "*"
           - Sid: TranscribeBatch
             Effect: Allow
             Action:
@@ -169,7 +178,7 @@ Resources:
               - transcribe:GetTranscriptionJob
               - transcribe:ListTranscriptionJobs
               - transcribe:DeleteTranscriptionJob
-            Resource: !Sub "arn:aws:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/${ProjectName}-${UserName}-*"
+            Resource: !Sub "arn:aws:transcribe:*:${AWS::AccountId}:transcription-job/${ProjectName}-*"
           - Sid: TranscribeS3
             Effect: Allow
             Action:
@@ -177,38 +186,14 @@ Resources:
               - s3:GetObject
               - s3:DeleteObject
             Resource:
-              - !If
-                - ShouldCreateS3Bucket
-                - !Sub "arn:aws:s3:::${TranscribeAudioBucket}/${UserName}/*"
-                - !Sub "arn:aws:s3:::${TranscribeS3BucketName}/${UserName}/*"
-
-  # ============================================================
-  # S3 バケット（Transcribe 一時保管）
-  # ============================================================
-  TranscribeAudioBucket:
-    Type: AWS::S3::Bucket
-    Condition: ShouldCreateS3Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      BucketName: !Sub "${ProjectName}-transcribe-${AWS::AccountId}"
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteTempFiles
-            Status: Enabled
-            ExpirationInDays: 7
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
+              - !Sub "arn:aws:s3:::${TranscribeBucketName}/${UserName}/*"
+              - !Sub "arn:aws:s3:::${TranscribeBucketName}/screen-audio-recorder/*"
+          - Sid: DenyStreaming
+            Effect: Deny
+            Action:
+              - transcribe:StartStreamTranscription
+              - transcribe:StartStreamTranscriptionWebSocket
+            Resource: "*"
 
   # ============================================================
   # IAM アクセスキー
@@ -233,7 +218,6 @@ Resources:
 
   # ============================================================
   # 使用量ガード: CloudWatch Alarm → SNS → Lambda → キー無効化
-  # 推論プロファイル単位のメトリクスで監視
   # ============================================================
   UsageGuardTopic:
     Type: AWS::SNS::Topic
@@ -326,7 +310,7 @@ Resources:
       Principal: sns.amazonaws.com
       SourceArn: !Ref UsageGuardTopic
 
-  # CloudWatch Alarm — 推論プロファイル単位の Invocations 数
+  # CloudWatch Alarm — Bedrock トークン使用量
   BedrockInvocationAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: ShouldEnableUsageGuard
@@ -347,11 +331,101 @@ Resources:
       AlarmActions:
         - !Ref UsageGuardTopic
 
+  # ============================================================
+  # Transcribe 使用量ガード:
+  # CloudTrail → CloudWatch Logs → メトリクスフィルタ → アラーム
+  # 全て同一条件 (ShouldEnableTranscribeGuard)
+  # バケットは共有スタックで作成済みのため、条件分岐不要
+  # ============================================================
+
+  # CloudWatch Logs ロググループ
+  TranscribeTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: ShouldEnableTranscribeGuard
+    Properties:
+      LogGroupName: !Sub "/aws/cloudtrail/${ProjectName}-${UserName}"
+      RetentionInDays: 14
+
+  # CloudTrail → CloudWatch Logs の書き込みロール
+  CloudTrailLogsRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldEnableTranscribeGuard
+    Properties:
+      RoleName: !Sub "${ProjectName}-${UserName}-trail-logs-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudTrailToLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${TranscribeTrailLogGroup.Arn}:*"
+
+  # CloudTrail（Transcribe API コールを記録）
+  # バケットは共有スタックで作成済み＋BucketPolicy 適用済みのため
+  # DependsOn 不要、バケット名を直接指定
+  TranscribeTrail:
+    Type: AWS::CloudTrail::Trail
+    Condition: ShouldEnableTranscribeGuard
+    Properties:
+      TrailName: !Sub "${ProjectName}-${UserName}-transcribe-trail"
+      IsLogging: true
+      S3BucketName: !Ref TranscribeBucketName
+      S3KeyPrefix: cloudtrail
+      CloudWatchLogsLogGroupArn: !GetAtt TranscribeTrailLogGroup.Arn
+      CloudWatchLogsRoleArn: !GetAtt CloudTrailLogsRole.Arn
+      EventSelectors:
+        - ReadWriteType: WriteOnly
+          IncludeManagementEvents: true
+          DataResources: []
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # メトリクスフィルタ — StartTranscriptionJob のコール数を計上
+  TranscribeJobMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Condition: ShouldEnableTranscribeGuard
+    DependsOn: TranscribeTrail
+    Properties:
+      LogGroupName: !Ref TranscribeTrailLogGroup
+      FilterPattern: !Sub '{ ($.eventName = "StartTranscriptionJob") && ($.userIdentity.userName = "${ProjectName}-${UserName}") }'
+      MetricTransformations:
+        - MetricNamespace: !Sub "${ProjectName}/TranscribeUsage"
+          MetricName: !Sub "${UserName}-TranscribeJobCount"
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # CloudWatch Alarm — 1日あたりの Transcribe ジョブ数
+  TranscribeJobAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: ShouldEnableTranscribeGuard
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${UserName}-transcribe-job-limit"
+      AlarmDescription: !Sub "${UserName} の Transcribe ジョブ数が日次上限 (${DailyTranscribeJobLimit}) を超過"
+      Namespace: !Sub "${ProjectName}/TranscribeUsage"
+      MetricName: !Sub "${UserName}-TranscribeJobCount"
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: !Ref DailyTranscribeJobLimit
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref UsageGuardTopic
+
 Outputs:
   InferenceProfileArn:
-    Description: >
-      Bedrock 推論プロファイル ARN。
-      アプリの bedrock_model_id にこの値を設定する。
+    Description: Bedrock 推論プロファイル ARN
     Value: !GetAtt InferenceProfile.InferenceProfileArn
 
   InferenceProfileId:
@@ -377,22 +451,17 @@ Outputs:
     Condition: ShouldCreateAccessKey
     Value: !Ref AppUserSecret
 
-  TranscribeS3Bucket:
-    Description: Transcribe 用 S3 バケット名
-    Condition: ShouldCreateS3Bucket
-    Value: !Ref TranscribeAudioBucket
-
   AppConfigSummary:
     Description: アプリ設定サマリー
     Value: !Sub |
       === ${UserName} のアプリ設定 ===
       【Bedrock】
-        - バックエンド: AWS Bedrock
-        - モデル ID（推論プロファイル）: ${InferenceProfile.InferenceProfileArn} を使用
+        - 推論プロファイル: ${InferenceProfile.InferenceProfileArn}
         - リージョン: ${AWS::Region}
       【Transcribe】
-        - バックエンド: AWS Transcribe
+        - S3 バケット: ${TranscribeBucketName}
         - リージョン: ${AWS::Region}
       【使用量ガード】
-        - 月間トークン上限: ${MonthlyTokenLimit}
+        - Bedrock 月間トークン上限: ${MonthlyTokenLimit}
+        - Transcribe 日次ジョブ上限: ${DailyTranscribeJobLimit}
         - 超過時: アクセスキー自動無効化

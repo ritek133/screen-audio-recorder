@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Screen Audio Recorder - SaaS 共有リソース
+  S3 バケット（Transcribe 一時保管 + CloudTrail ログ）を作成。
+  ユーザースタック (12_saas-user.yaml) から参照される。
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: screen-recorder
+    Description: プロジェクト名（リソース名のプレフィックス）
+
+Resources:
+  # ============================================================
+  # S3 バケット（Transcribe 一時保管 + CloudTrail ログ保存）
+  # ============================================================
+  TranscribeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectName}-transcribe-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteTempAudioFiles
+            Status: Enabled
+            Prefix: "audio/"
+            ExpirationInDays: 7
+          - Id: DeleteCloudTrailLogs
+            Status: Enabled
+            Prefix: "cloudtrail/"
+            ExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================
+  # S3 バケットポリシー（CloudTrail 書き込み許可）
+  # 全ユーザーの Trail からの書き込みを許可するため、
+  # Trail 名のプレフィックスで制限する
+  # ============================================================
+  TranscribeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TranscribeBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt TranscribeBucket.Arn
+            Condition:
+              StringLike:
+                aws:SourceArn: !Sub "arn:aws:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${ProjectName}-*"
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${TranscribeBucket.Arn}/cloudtrail/AWSLogs/${AWS::AccountId}/*"
+            Condition:
+              StringLike:
+                aws:SourceArn: !Sub "arn:aws:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${ProjectName}-*"
+
+Outputs:
+  TranscribeBucketName:
+    Description: Transcribe 用 S3 バケット名
+    Value: !Ref TranscribeBucket
+    Export:
+      Name: !Sub "${ProjectName}-transcribe-bucket-name"
+
+  TranscribeBucketArn:
+    Description: Transcribe 用 S3 バケット ARN
+    Value: !GetAtt TranscribeBucket.Arn
+    Export:
+      Name: !Sub "${ProjectName}-transcribe-bucket-arn"

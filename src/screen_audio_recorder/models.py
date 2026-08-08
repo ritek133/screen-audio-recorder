@@ -205,6 +205,7 @@ class TranscriberSettings:
         vllm_endpoint: vLLM サーバーの URL（例: http://host:8000/v1/audio/transcriptions）
         vllm_model_name: vLLM サーバーで使用するモデル名
         aws_transcribe_language: Amazon Transcribe の言語コード
+        aws_s3_bucket: Transcribe バッチジョブ用 S3 バケット名
     """
 
     backend: TranscriberBackend = TranscriberBackend.LOCAL
@@ -212,6 +213,7 @@ class TranscriberSettings:
     vllm_endpoint: str = ""
     vllm_model_name: str = "whisper-large-v3"
     aws_transcribe_language: str = "ja-JP"
+    aws_s3_bucket: str = ""
 
 
 @dataclass

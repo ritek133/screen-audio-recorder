@@ -86,7 +86,7 @@ class LlmSettingsTab:
     def __init__(
         self,
         parent: tk.Widget,
-        on_settings_changed: Callable[[LlmSettings], None] | None = None,
+        on_settings_changed: Callable[[LlmSettings, AwsSettings], None] | None = None,
     ) -> None:
         """LlmSettingsTab を初期化する.
 
@@ -131,6 +131,9 @@ class LlmSettingsTab:
         )
         self._aws_transcribe_lang_var = tk.StringVar(
             value=self._transcriber_settings.aws_transcribe_language
+        )
+        self._aws_s3_bucket_var = tk.StringVar(
+            value=self._transcriber_settings.aws_s3_bucket
         )
 
         # tkinter 変数 — AWS 設定
@@ -294,6 +297,19 @@ class LlmSettingsTab:
             text="※ AWS 設定セクションで認証情報を設定してください",
             foreground="gray",
         ).pack(anchor=tk.W, pady=(4, 0))
+
+        # S3 バケット名
+        s3_row = ttk.Frame(self._aws_transcribe_frame)
+        s3_row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(s3_row, text="S3 バケット名:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Entry(
+            s3_row, textvariable=self._aws_s3_bucket_var, width=40
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(
+            self._aws_transcribe_frame,
+            text="※ 音声ファイルのアップロード先。CloudFormation Output の TranscribeBucketName を入力",
+            foreground="gray",
+        ).pack(anchor=tk.W, pady=(2, 0))
 
     def _build_llm_backend_section(self, parent: ttk.Frame) -> None:
         """LLM 推論バックエンド設定セクションを構築する."""
@@ -726,7 +742,7 @@ class LlmSettingsTab:
             self._aws_settings = aws_settings
             messagebox.showinfo("設定保存", "設定を保存しました。")
             if self._on_settings_changed is not None:
-                self._on_settings_changed(llm_settings)
+                self._on_settings_changed(llm_settings, aws_settings)
         except Exception as exc:
             logger.exception("設定の保存に失敗しました。")
             messagebox.showerror("保存エラー", f"設定の保存に失敗しました:\n{exc}")
@@ -1081,6 +1097,7 @@ class LlmSettingsTab:
             vllm_endpoint=self._vllm_endpoint_var.get().strip(),
             vllm_model_name=self._vllm_model_name_var.get().strip(),
             aws_transcribe_language=self._aws_transcribe_lang_var.get().strip(),
+            aws_s3_bucket=self._aws_s3_bucket_var.get().strip(),
         )
 
     def _collect_aws_settings(self) -> AwsSettings:

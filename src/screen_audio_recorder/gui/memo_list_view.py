@@ -41,17 +41,19 @@ class MemoListView:
         frame: 外部から参照可能なルートフレーム
     """
 
-    def __init__(self, parent: tk.Widget, memo_store: MemoStore, text_post_processor=None, root=None) -> None:
+    def __init__(self, parent: tk.Widget, memo_store: MemoStore, text_post_processor=None, transcriber=None, root=None) -> None:
         """MemoListView を初期化する.
 
         Args:
             parent: 親ウィジェット
             memo_store: メモストア
             text_post_processor: TextPostProcessor インスタンス（再処理用）
+            transcriber: Transcriber インスタンス（再文字起こし用）
             root: tkinter ルートウィンドウ（スレッド通知用）
         """
         self._memo_store = memo_store
         self._text_post_processor = text_post_processor
+        self._transcriber = transcriber
         self._root = root
         self._current_page = 1
         self._total_pages = 1
@@ -98,71 +100,31 @@ class MemoListView:
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        """UI コンポーネントを構築・配置する."""
+        """UI コンポーネントを構築・配置する.
+
+        2ペイン横並びレイアウト（ADR-001 案3）:
+        - 左ペイン: メモ一覧（Treeview） + ページネーション + 操作ボタン
+        - 右ペイン: 要約 + 全文（縦積み）
+        """
         # --- Treeview の行の高さを設定（日本語フォントが切れないように）---
         style = ttk.Style()
         style.configure("MemoList.Treeview", rowheight=28, font=("", 10))
         style.configure("MemoList.Treeview.Heading", font=("", 10, "bold"))
 
-        # --- 操作ボタン（先に pack して下部スペースを確保）---
-        btn_frame = ttk.Frame(self.frame)
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
-
-        self._play_btn = ttk.Button(
-            btn_frame,
-            text="▶ 再生",
-            command=self._on_play,
-            state=tk.DISABLED,
-        )
-        self._play_btn.pack(side=tk.LEFT, padx=(0, 6))
-
-        self._delete_btn = ttk.Button(
-            btn_frame,
-            text="削除",
-            command=self._on_delete,
-            state=tk.DISABLED,
-        )
-        self._delete_btn.pack(side=tk.LEFT)
-
-        self._reprocess_btn = ttk.Button(
-            btn_frame,
-            text="🔄 LLM 再処理",
-            command=self._on_reprocess,
-            state=tk.DISABLED,
-        )
-        self._reprocess_btn.pack(side=tk.LEFT, padx=(6, 0))
-
-        # --- ページネーション（ボタンの上に配置）---
-        page_frame = ttk.Frame(self.frame)
-        page_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
-
-        self._prev_btn = ttk.Button(
-            page_frame,
-            text="◀ 前ページ",
-            command=self._on_prev_page,
-            state=tk.DISABLED,
-        )
-        self._prev_btn.pack(side=tk.LEFT, padx=(0, 6))
-
-        self._page_label = ttk.Label(page_frame, text="1 / 1")
-        self._page_label.pack(side=tk.LEFT, padx=(0, 6))
-
-        self._next_btn = ttk.Button(
-            page_frame,
-            text="次ページ ▶",
-            command=self._on_next_page,
-            state=tk.DISABLED,
-        )
-        self._next_btn.pack(side=tk.LEFT)
-
-        # --- PanedWindow で3ペインを均等配置 ---
-        paned = ttk.PanedWindow(self.frame, orient=tk.VERTICAL)
+        # --- 2ペイン横並び（PanedWindow HORIZONTAL）---
+        paned = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
 
-        # --- Treeview（メモ一覧）---
-        tree_frame = ttk.Frame(paned)
+        # ==============================================================
+        # 左ペイン: メモ一覧 + ページネーション + 操作ボタン
+        # ==============================================================
+        left_frame = ttk.Frame(paned)
 
-        columns = ("created_at", "theme", "preview")
+        # --- Treeview（メモ一覧）---
+        tree_frame = ttk.Frame(left_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        columns = ("created_at", "theme")
         self._tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -171,14 +133,12 @@ class MemoListView:
             style="MemoList.Treeview",
         )
 
-        # カラムヘッダー設定
+        # カラムヘッダー設定（コンパクト: 日時+テーマのみ）
         self._tree.heading("created_at", text="作成日時")
         self._tree.heading("theme", text="テーマ")
-        self._tree.heading("preview", text="内容（先頭 50 文字）")
 
-        self._tree.column("created_at", width=160, minwidth=120)
-        self._tree.column("theme", width=120, minwidth=80)
-        self._tree.column("preview", width=400, minwidth=200)
+        self._tree.column("created_at", width=150, minwidth=120)
+        self._tree.column("theme", width=100, minwidth=70)
 
         # スクロールバー
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
@@ -192,10 +152,78 @@ class MemoListView:
         # ダブルクリックでテーマ編集
         self._tree.bind("<Double-1>", self._on_double_click)
 
-        paned.add(tree_frame, weight=1)
+        # --- ページネーション ---
+        page_frame = ttk.Frame(left_frame)
+        page_frame.pack(fill=tk.X, pady=(4, 0))
+
+        self._prev_btn = ttk.Button(
+            page_frame,
+            text="◀ 前",
+            command=self._on_prev_page,
+            state=tk.DISABLED,
+        )
+        self._prev_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self._page_label = ttk.Label(page_frame, text="1 / 1")
+        self._page_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        self._next_btn = ttk.Button(
+            page_frame,
+            text="次 ▶",
+            command=self._on_next_page,
+            state=tk.DISABLED,
+        )
+        self._next_btn.pack(side=tk.LEFT)
+
+        # --- 操作ボタン ---
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill=tk.X, pady=(4, 0))
+
+        self._play_btn = ttk.Button(
+            btn_frame,
+            text="▶ 再生",
+            command=self._on_play,
+            state=tk.DISABLED,
+        )
+        self._play_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self._delete_btn = ttk.Button(
+            btn_frame,
+            text="削除",
+            command=self._on_delete,
+            state=tk.DISABLED,
+        )
+        self._delete_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self._reprocess_btn = ttk.Button(
+            btn_frame,
+            text="🔄 再処理",
+            command=self._on_reprocess,
+            state=tk.DISABLED,
+        )
+        self._reprocess_btn.pack(side=tk.LEFT)
+
+        self._retranscribe_btn = ttk.Button(
+            btn_frame,
+            text="🎙 再文字起こし",
+            command=self._on_retranscribe,
+            state=tk.DISABLED,
+        )
+        self._retranscribe_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+        paned.add(left_frame, weight=1)
+
+        # ==============================================================
+        # 右ペイン: 要約 + 全文（縦積み）
+        # ==============================================================
+        right_frame = ttk.Frame(paned)
+
+        # 右ペイン内を縦に分割
+        right_paned = ttk.PanedWindow(right_frame, orient=tk.VERTICAL)
+        right_paned.pack(fill=tk.BOTH, expand=True)
 
         # --- 要約ペイン ---
-        summary_frame = ttk.LabelFrame(paned, text="要約", padding=4)
+        summary_frame = ttk.LabelFrame(right_paned, text="要約", padding=4)
 
         self._summary_text = tk.Text(
             summary_frame,
@@ -210,10 +238,10 @@ class MemoListView:
         self._summary_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         summary_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        paned.add(summary_frame, weight=1)
+        right_paned.add(summary_frame, weight=1)
 
         # --- 全文ペイン ---
-        detail_frame = ttk.LabelFrame(paned, text="全文", padding=4)
+        detail_frame = ttk.LabelFrame(right_paned, text="全文", padding=4)
 
         self._detail_text = tk.Text(
             detail_frame,
@@ -227,7 +255,9 @@ class MemoListView:
         self._detail_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         detail_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        paned.add(detail_frame, weight=1)
+        right_paned.add(detail_frame, weight=2)
+
+        paned.add(right_frame, weight=2)
 
     # ------------------------------------------------------------------
     # データ表示
@@ -237,7 +267,7 @@ class MemoListView:
         """Treeview にメモデータを設定する.
 
         要件 9.1: 作成日時の降順で表示（MemoStore.get_all() が降順で返す）
-        要件 9.2: 作成日時・テーマ・本文先頭 50 文字を表示
+        要件 9.2: 作成日時・テーマを表示（全文は右ペインで表示）
         """
         # 既存の行をクリア
         for item in self._tree.get_children():
@@ -249,12 +279,11 @@ class MemoListView:
                 __import__("datetime").timezone(__import__("datetime").timedelta(hours=9))
             )
             created_at_str = jst.strftime("%Y-%m-%d %H:%M:%S")
-            preview = self.get_preview_text(memo.body)
             self._tree.insert(
                 "",
                 tk.END,
                 iid=memo.id,
-                values=(created_at_str, memo.theme, preview),
+                values=(created_at_str, memo.theme),
             )
 
     def _update_pagination_buttons(self) -> None:
@@ -304,6 +333,15 @@ class MemoListView:
         self._delete_btn.config(state=tk.NORMAL)
         self._reprocess_btn.config(
             state=tk.NORMAL if self._text_post_processor is not None else tk.DISABLED
+        )
+        # 再文字起こしボタン: Transcriber があり、output_file が存在する場合のみ有効
+        retranscribe_enabled = (
+            self._transcriber is not None
+            and memo.output_file is not None
+            and memo.output_file.exists()
+        )
+        self._retranscribe_btn.config(
+            state=tk.NORMAL if retranscribe_enabled else tk.DISABLED
         )
 
     def _on_double_click(self, event: tk.Event) -> None:
@@ -463,7 +501,75 @@ class MemoListView:
 
     def _on_reprocess_done(self) -> None:
         """再処理完了時の GUI 更新."""
-        self._reprocess_btn.config(text="🔄 LLM 再処理")
+        self._reprocess_btn.config(text="🔄 再処理")
+        self.refresh()
+
+    def _on_retranscribe(self) -> None:
+        """再文字起こしボタンのイベントハンドラ。選択中のメモの音声を再度文字起こしする."""
+        selected = self._tree.selection()
+        if not selected:
+            return
+
+        memo_id = selected[0]
+        memo = self._find_memo_by_id(memo_id)
+        if memo is None:
+            return
+
+        if self._transcriber is None:
+            return
+
+        if memo.output_file is None or not memo.output_file.exists():
+            logger.warning("音声ファイルが見つかりません: %s", memo.output_file)
+            return
+
+        # ボタンを無効化して処理中表示
+        self._retranscribe_btn.config(state=tk.DISABLED, text="文字起こし中...")
+
+        def _worker():
+            try:
+                # 音声ファイルを再度文字起こし
+                result = self._transcriber.transcribe(memo.output_file)
+
+                if result.error:
+                    logger.error("再文字起こしに失敗しました: %s", result.error)
+                    return
+
+                text = result.text
+
+                # TextPostProcessor が利用可能な場合は LLM で後処理
+                if self._text_post_processor is not None and text:
+                    post_result = self._text_post_processor.process(text)
+                    corrected_text = post_result.corrected_text
+                    summary = post_result.summary
+                    theme = post_result.theme
+                else:
+                    corrected_text = text
+                    summary = ""
+                    theme = memo.theme  # テーマは既存のものを保持
+
+                # メモを更新
+                self._memo_store.update_memo(
+                    memo_id=memo.id,
+                    body=corrected_text,
+                    theme=theme,
+                    summary=summary,
+                )
+                logger.info("再文字起こし完了: %s", memo.id)
+            except Exception:
+                logger.exception("再文字起こしに失敗しました: %s", memo.id)
+            finally:
+                # GUI スレッドで更新
+                if self._root is not None:
+                    self._root.after_idle(self._on_retranscribe_done)
+                else:
+                    self._on_retranscribe_done()
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_retranscribe_done(self) -> None:
+        """再文字起こし完了時の GUI 更新."""
+        self._retranscribe_btn.config(text="🎙 再文字起こし")
         self.refresh()
 
     # ------------------------------------------------------------------

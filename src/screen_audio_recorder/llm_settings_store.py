@@ -194,6 +194,7 @@ def _transcriber_settings_to_dict(settings: TranscriberSettings) -> dict:
         "vllm_endpoint": settings.vllm_endpoint,
         "vllm_model_name": settings.vllm_model_name,
         "aws_transcribe_language": settings.aws_transcribe_language,
+        "aws_s3_bucket": settings.aws_s3_bucket,
     }
 
 
@@ -211,6 +212,7 @@ def _dict_to_transcriber_settings(data: dict) -> TranscriberSettings:
         vllm_endpoint=data.get("vllm_endpoint", ""),
         vllm_model_name=data.get("vllm_model_name", "whisper-large-v3"),
         aws_transcribe_language=data.get("aws_transcribe_language", "ja-JP"),
+        aws_s3_bucket=data.get("aws_s3_bucket", ""),
     )
 
 

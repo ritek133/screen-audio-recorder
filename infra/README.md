@@ -10,7 +10,8 @@ infra/
 ├── templates/
 │   ├── 01_network.yaml          # VPC・サブネット・セキュリティグループ
 │   ├── 11_vllm-server.yaml      # vLLM 推論サーバー（GPU EC2）
-│   └── 12_saas-resources.yaml   # SaaS 利用リソース（Bedrock/Transcribe 用 IAM）
+│   ├── 12_saas-shared.yaml      # SaaS 共有リソース（S3 バケット）
+│   └── 12_saas-user.yaml        # SaaS ユーザーリソース（IAM・Bedrock・監視）
 └── parameters/
     └── dev.json                 # 開発環境パラメータ例
 ```
@@ -56,12 +57,27 @@ aws cloudformation deploy \
 
 ### 3. SaaS リソース（Bedrock/Transcribe 利用の場合）
 
+#### 3a. 共有リソース（初回のみ）
+
 ```bash
 aws cloudformation deploy \
-  --template-file templates/12_saas-resources.yaml \
-  --stack-name screen-recorder-saas \
+  --template-file templates/12_saas-shared.yaml \
+  --stack-name screen-recorder-saas-shared \
+  --parameter-overrides ProjectName=screen-recorder
+```
+
+#### 3b. ユーザーリソース（ユーザーごと）
+
+```bash
+aws cloudformation deploy \
+  --template-file templates/12_saas-user.yaml \
+  --stack-name screen-recorder-saas-user01 \
   --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides file://parameters/dev.json
+  --parameter-overrides \
+    ProjectName=screen-recorder \
+    UserName=user01 \
+    TranscribeBucketName=screen-recorder-transcribe-<アカウントID> \
+    BedrockModelArn=arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0
 ```
 
 ## アプリとの接続設定
