@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "雑務ブランチ作成",
+      "trigger": "SessionStart",
+      "description": "CI・依存更新等の雑務用ブランチを作成して作業を開始する",
+      "action": {
+        "type": "agent",
+        "prompt": "以下を実行してください:\n1. `git checkout main && git pull origin main` でmainを最新化\n2. ユーザーに「何の作業をしますか？（CI変更、依存更新など）」と聞く\n3. 回答から英語のブランチ名を生成: chore/<短い説明>（ハイフン区切り、2〜4単語）\n4. ブランチ名を提示して確認を取り、`git checkout -b chore/xxx` を実行"
+      }
+    }
+  ]
+}

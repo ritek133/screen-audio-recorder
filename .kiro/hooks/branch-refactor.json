@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "リファクタリングブランチ作成",
+      "trigger": "SessionStart",
+      "description": "リファクタリング用のブランチを作成して作業を開始する",
+      "action": {
+        "type": "agent",
+        "prompt": "以下を実行してください:\n1. `git checkout main && git pull origin main` でmainを最新化\n2. ユーザーに「何をリファクタリングしますか？」と聞く\n3. 回答から英語のブランチ名を生成: refactor/<短い説明>（ハイフン区切り、2〜4単語）\n4. ブランチ名を提示して確認を取り、`git checkout -b refactor/xxx` を実行"
+      }
+    }
+  ]
+}

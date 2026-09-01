@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "build",
+      "trigger": "Manual",
+      "action": {
+        "type": "command",
+        "command": "powershell -NoProfile -Command \"Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','scripts\\build.bat' -WindowStyle Hidden; Write-Host 'ビルドをバックグラウンドで開始しました。監視: powershell -File scripts/build-watch.ps1'\""
+      },
+      "timeout": 0,
+      "enabled": true
+    }
+  ]
+}

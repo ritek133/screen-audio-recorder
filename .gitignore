@@ -19,7 +19,8 @@ __pycache__/
 .hypothesis/
 .pytest_cache/
 
-# Test output logs
+# Build / test logs
+logs/
 test_output.txt
 test_ve_output.txt
 test_rc_output.txt

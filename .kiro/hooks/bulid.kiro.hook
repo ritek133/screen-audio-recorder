@@ -1,15 +1,16 @@
 {
   "version": "1.0.0",
   "enabled": true,
-  "name": "bulid",
+  "name": "build",
+  "description": "PyInstaller ビルドをバックグラウンドで起動する。進捗は logs/build_status.txt に出力され、scripts/build-watch.ps1 で監視できる。",
   "when": {
     "type": "userTriggered"
   },
   "then": {
     "type": "runCommand",
-    "command": "python -m PyInstaller screen_audio_recorder.spec --noconfirm && echo === BUILD SUCCESS === || echo === BUILD FAILED ===",
+    "command": "powershell -NoProfile -Command \"Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','scripts\\build.bat' -WindowStyle Hidden; Write-Host 'ビルドをバックグラウンドで開始しました。監視: powershell -File scripts/build-watch.ps1'\"",
     "timeout": 0
   },
   "workspaceFolderName": "work-type-0",
-  "shortName": "bulid"
+  "shortName": "build"
 }

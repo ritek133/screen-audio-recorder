@@ -1,19 +1,19 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Screen Audio Recorder - SaaS ユーザーリソース（ユーザー単位）
-  Bedrock 推論プロファイル + IAM ユーザー + 使用量監視を作成。
-  共有バケット (12_saas-shared.yaml) のバケット名をパラメータで受け取る。
+  Screen Audio Recorder - SaaS per-user resources.
+  Creates a Bedrock inference profile, an IAM user, and usage monitoring.
+  Receives the shared bucket name (from 12_saas-shared.yaml) as a parameter.
 
 Parameters:
   ProjectName:
     Type: String
     Default: screen-recorder
-    Description: プロジェクト名（リソース名のプレフィックス）
+    Description: Project name (prefix for resource names)
 
   UserName:
     Type: String
     Description: >
-      対象ユーザー名（例: user-a）。リソース名に使用。
+      Target user name (e.g. user-a). Used in resource names.
 
   CreateAccessKey:
     Type: String
@@ -21,12 +21,12 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
-    Description: IAM アクセスキーを作成するか
+    Description: Whether to create an IAM access key
 
   BedrockModelArn:
     Type: String
     Default: "arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
-    Description: 推論プロファイルのソースモデル ARN
+    Description: Source model ARN for the inference profile
 
   EnableTranscribe:
     Type: String
@@ -34,13 +34,13 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
-    Description: Amazon Transcribe の利用を許可するか
+    Description: Whether to allow use of Amazon Transcribe
 
   TranscribeBucketName:
     Type: String
     Description: >
-      共有スタック (12_saas-shared) で作成された S3 バケット名。
-      共有スタックの Output TranscribeBucketName の値を指定。
+      S3 bucket name created by the shared stack (12_saas-shared).
+      Specify the value of the shared stack Output TranscribeBucketName.
 
   EnableUsageGuard:
     Type: String
@@ -48,17 +48,17 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
-    Description: 使用量ガード（上限超過時にキー無効化）を有効にするか
+    Description: Whether to enable the usage guard (disables the key when a limit is exceeded)
 
   MonthlyTokenLimit:
     Type: Number
     Default: 500000
-    Description: 月間トークン上限。超過でアクセスキーを自動無効化。
+    Description: Monthly token limit. Access key is auto-disabled when exceeded.
 
   DailyTranscribeJobLimit:
     Type: Number
     Default: 10
-    Description: 1日あたりの Transcribe ジョブ数上限。超過でアクセスキーを自動無効化。
+    Description: Daily Transcribe job limit. Access key is auto-disabled when exceeded.
 
 Conditions:
   ShouldCreateAccessKey: !Equals [!Ref CreateAccessKey, "true"]
@@ -210,6 +210,11 @@ Resources:
     Properties:
       Name: !Sub "${ProjectName}/${UserName}/credentials"
       Description: !Sub "${UserName} 用 AWS 認証情報"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
       SecretString: !Sub
         - '{"access_key_id":"${AccessKeyId}","secret_access_key":"${SecretKey}","region":"${AWS::Region}","inference_profile_arn":"${ProfileArn}"}'
         - AccessKeyId: !Ref AppUserAccessKey
@@ -224,6 +229,11 @@ Resources:
     Condition: ShouldEnableUsageGuard
     Properties:
       TopicName: !Sub "${ProjectName}-${UserName}-usage-guard"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
   UsageGuardLambdaRole:
     Type: AWS::IAM::Role
@@ -249,6 +259,11 @@ Resources:
                   - iam:UpdateAccessKey
                   - iam:ListAccessKeys
                 Resource: !GetAtt AppUser.Arn
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
   UsageGuardFunction:
     Type: AWS::Lambda::Function
@@ -292,6 +307,11 @@ Resources:
                       logger.info("Disabled key: %s", key["AccessKeyId"])
 
               return {"disabled_keys": disabled}
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
   UsageGuardSubscription:
     Type: AWS::SNS::Subscription
@@ -330,6 +350,11 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref UsageGuardTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
   # ============================================================
   # Transcribe 使用量ガード:
@@ -345,6 +370,11 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/cloudtrail/${ProjectName}-${UserName}"
       RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
   # CloudTrail → CloudWatch Logs の書き込みロール
   CloudTrailLogsRole:
@@ -369,6 +399,11 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub "${TranscribeTrailLogGroup.Arn}:*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
   # CloudTrail（Transcribe API コールを記録）
   # バケットは共有スタックで作成済み＋BucketPolicy 適用済みのため
@@ -390,6 +425,8 @@ Resources:
       Tags:
         - Key: Project
           Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
   # メトリクスフィルタ — StartTranscriptionJob のコール数を計上
   TranscribeJobMetricFilter:
@@ -422,27 +459,32 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref UsageGuardTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
 
 Outputs:
   InferenceProfileArn:
-    Description: Bedrock 推論プロファイル ARN
+    Description: Bedrock inference profile ARN
     Value: !GetAtt InferenceProfile.InferenceProfileArn
 
   InferenceProfileId:
-    Description: 推論プロファイル ID
+    Description: Inference profile ID
     Value: !GetAtt InferenceProfile.InferenceProfileId
 
   AppUserArn:
-    Description: IAM ユーザー ARN
+    Description: IAM user ARN
     Value: !GetAtt AppUser.Arn
 
   AccessKeyId:
-    Description: アクセスキー ID
+    Description: Access key ID
     Condition: ShouldCreateAccessKey
     Value: !Ref AppUserAccessKey
 
   SecretAccessKey:
-    Description: シークレットアクセスキー（スタック作成時のみ表示）
+    Description: Secret access key (shown only at stack creation)
     Condition: ShouldCreateAccessKey
     Value: !GetAtt AppUserAccessKey.SecretAccessKey
 
@@ -452,16 +494,16 @@ Outputs:
     Value: !Ref AppUserSecret
 
   AppConfigSummary:
-    Description: アプリ設定サマリー
+    Description: Application configuration summary
     Value: !Sub |
-      === ${UserName} のアプリ設定 ===
-      【Bedrock】
-        - 推論プロファイル: ${InferenceProfile.InferenceProfileArn}
-        - リージョン: ${AWS::Region}
-      【Transcribe】
-        - S3 バケット: ${TranscribeBucketName}
-        - リージョン: ${AWS::Region}
-      【使用量ガード】
-        - Bedrock 月間トークン上限: ${MonthlyTokenLimit}
-        - Transcribe 日次ジョブ上限: ${DailyTranscribeJobLimit}
-        - 超過時: アクセスキー自動無効化
+      === App config for ${UserName} ===
+      [Bedrock]
+        - Inference profile: ${InferenceProfile.InferenceProfileArn}
+        - Region: ${AWS::Region}
+      [Transcribe]
+        - S3 bucket: ${TranscribeBucketName}
+        - Region: ${AWS::Region}
+      [Usage guard]
+        - Bedrock monthly token limit: ${MonthlyTokenLimit}
+        - Transcribe daily job limit: ${DailyTranscribeJobLimit}
+        - On breach: access key auto-disabled
