@@ -8,10 +8,11 @@ on:
     branches: [main]
 
 jobs:
-  # テストジョブ: OS 非依存のロジックテストのため ubuntu-latest で実行する
+  # テストジョブ: Windows 専用依存（dxcam / PyAudioWPatch）を含むため windows-latest で実行する。
+  # これらは Linux 用 wheel が提供されず ubuntu では依存インストールに失敗するため。
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@v4
@@ -33,6 +34,11 @@ jobs:
   security:
     name: security
     runs-on: ubuntu-latest
+    # gitleaks-action が PR のコミット一覧を取得する際に GITHUB_TOKEN の read 権限が必要。
+    # permissions 未宣言だとトークン権限不足で 403（Resource not accessible by integration）になる。
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: リポジトリをチェックアウト（全履歴）
         uses: actions/checkout@v4
