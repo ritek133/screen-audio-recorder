@@ -1,0 +1,92 @@
+# Release ワークフロー
+# バージョンタグ（v*）の push で自動的にビルドとリリースを実行する。
+# PyInstaller で Windows exe を生成するため windows-latest で実行する。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# リリース作成・アセットアップロードに必要な権限
+permissions:
+  contents: write
+
+jobs:
+  # リリースジョブ: テスト → ビルド → 後処理 → リリース作成を単一ジョブで実行する。
+  # 後続ステップ（PyInstaller ビルド・後処理・リリース作成）はこのジョブに追記していく。
+  release:
+    name: release
+    runs-on: windows-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python 3.10 をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: 依存関係をインストール（開発依存を含む）
+        run: pip install -e ".[dev]"
+
+      - name: pytest を実行（ビルド前ゲート）
+        # テストがパスした場合のみ後続のビルドに進む（CD-5）
+        run: pytest
+
+      - name: PyInstaller をインストール
+        # PyInstaller は dev 依存に含まれないため、ビルド前にインストールする（CD-3）
+        run: pip install pyinstaller
+
+      - name: PyInstaller でビルド
+        # spec ファイルで --onedir ビルドし、dist/screen-audio-recorder/ を生成する（CD-3、CD-4）
+        run: pyinstaller screen_audio_recorder.spec
+
+      - name: ビルド成果物の生成を確認
+        # 出力ディレクトリと exe が生成されていることを検証する（CD-4）
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/screen-audio-recorder/screen-audio-recorder.exe")) {
+            Write-Error "ビルド成果物が見つかりません: dist/screen-audio-recorder/screen-audio-recorder.exe"
+            exit 1
+          }
+          Write-Host "ビルド成果物を確認しました: dist/screen-audio-recorder/"
+      - name: ビルド成果物を後処理（リネーム・圧縮）
+        # exe のリネームコピーと --onedir 一式の zip 化を行い、artifacts/ に配置する（POST-1〜POST-4）
+        shell: pwsh
+        run: |
+          # github.ref_name（例: v0.2.0）から v プレフィックスを除去してバージョン番号を抽出する（POST-1）
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          Write-Host "抽出したバージョン番号: $version"
+
+          # 成果物出力用ディレクトリを作成する（POST-2）
+          New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
+
+          # exe を screen-audio-recorder-vX.Y.Z.exe にリネームコピーする（POST-3）
+          $exeName = "screen-audio-recorder-v$version.exe"
+          Copy-Item -Path "dist/screen-audio-recorder/screen-audio-recorder.exe" -Destination "artifacts/$exeName"
+          Write-Host "exe をコピーしました: artifacts/$exeName"
+
+          # dist/screen-audio-recorder/ の「中身」を zip 化する。
+          # ルート直下に screen-audio-recorder.exe と _internal/ が並ぶ構造にする（余分な親ディレクトリを含めない）（POST-4）
+          $zipName = "screen-audio-recorder-v$version-full.zip"
+          Compress-Archive -Path "dist/screen-audio-recorder/*" -DestinationPath "artifacts/$zipName" -Force
+          Write-Host "zip を作成しました: artifacts/$zipName"
+
+      - name: リリースを作成しアセットをアップロード
+        # softprops/action-gh-release でタグからリリースを作成し、exe と full.zip をアップロードする（REL-1〜REL-5）
+        uses: softprops/action-gh-release@v2
+        with:
+          # リリース名とタグ（REL-1、REL-2）
+          name: Screen Audio Recorder ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          # 正式リリースとして公開し、自動更新の対象にする（REL-3）
+          draft: false
+          prerelease: false
+          # 前回タグからの差分をリリースノートとして自動生成する（REL-4）
+          generate_release_notes: true
+          # exe と full.zip の両方をリリースアセットとしてアップロードする（REL-5）
+          files: |
+            artifacts/screen-audio-recorder-v*.exe
+            artifacts/screen-audio-recorder-v*-full.zip

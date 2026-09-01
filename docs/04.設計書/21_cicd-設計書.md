@@ -31,7 +31,7 @@ on:
 
 ```
 job: test
-  runs-on: ubuntu-latest
+  runs-on: windows-latest
   steps:
     1. リポジトリチェックアウト
     2. Python 3.10 セットアップ
@@ -40,6 +40,9 @@ job: test
 
 job: security
   runs-on: ubuntu-latest
+  permissions:
+    contents: read
+    pull-requests: read
   steps:
     1. リポジトリチェックアウト（全履歴）
     2. gitleaks によるシークレットスキャン（PR差分のみ）
@@ -50,10 +53,11 @@ job: security
 
 | 項目 | 判断 | 理由 |
 |------|------|------|
-| OS | ubuntu-latest | テストは OS 非依存のロジックテスト。Linux の方が起動が速く無料枠を節約 |
+| OS | windows-latest | 当初は「OS 非依存のロジックテスト」との想定で ubuntu-latest を採用したが、実行時依存の dxcam / PyAudioWPatch が Windows 専用で Linux 用 wheel を提供しないため、ubuntu では `pip install -e ".[dev]"` が失敗する。CI 検証（タスク8.1）でこの不具合を確認し、windows-latest へ変更した。Release ワークフローも windows-latest であり一貫する |
 | Python バージョン | 3.10 固定 | pyproject.toml の requires-python と一致。マトリクスは不要（デスクトップアプリのため） |
 | キャッシュ | pip キャッシュを使用 | 依存インストールの高速化 |
 | ジョブ分離 | test と security を並列実行 | 互いに依存しないため並列化で CI 時間を短縮 |
+| OS 変更の経緯 | ubuntu-latest → windows-latest | dxcam / PyAudioWPatch は Windows 専用依存であり Linux では導入不可。テストコード自体は OS 非依存でも、依存インストール段階で失敗するため Windows runner が必須 |
 
 ---
 
@@ -74,6 +78,16 @@ job: security
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+- gitleaks-action は PR のコミット一覧を GitHub API 経由で取得するため、`GITHUB_TOKEN` に `contents: read` と `pull-requests: read` の権限が必要。security ジョブに `permissions` を宣言していないと権限不足で 403（`Resource not accessible by integration`）が発生する。CI 検証（タスク8.1）でこの不具合を確認したため、security ジョブに以下の `permissions` を宣言する（SEC-6）:
+
+```yaml
+job: security
+  permissions:
+    contents: read
+    pull-requests: read
+```
+
+- 上記の permissions 宣言でも 403 が解消しない場合、リポジトリ側で Actions のトークン権限が制限されている可能性がある。その場合は リポジトリ Settings > Actions > General > Workflow permissions を「Read and write permissions」に変更する。
 - PR の差分コミットのみをスキャン（デフォルト動作）
 - 検出対象パターン（内蔵）:
   - AWS Access Key ID（`AKIA...`）
@@ -278,10 +292,22 @@ GitHub Actions の設定ファイルでは制御できないため、リポジ�
 
 ### permissions 設定
 
+Release ワークフロー（release.yml）:
+
 ```yaml
 permissions:
   contents: write  # リリース作成・アセットアップロードに必要
 ```
+
+CI ワークフロー（ci.yml）の security ジョブ:
+
+```yaml
+permissions:
+  contents: read        # リポジトリ内容の読み取り
+  pull-requests: read   # gitleaks-action が PR コミット一覧を取得するために必要
+```
+
+- security ジョブに permissions を宣言しないと、gitleaks-action が PR コミット取得時に 403（`Resource not accessible by integration`）で失敗する（SEC-6）。
 
 ---
 

@@ -1,0 +1,110 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. CI ワークフロー（test ジョブ）の構築": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260154189
+      },
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260172296
+      },
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788263470861
+      }
+    ],
+    "2.1 `security` ジョブを `ci.yml` に追加する": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260154622
+      },
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788263481603
+      },
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788263817745
+      }
+    ],
+    "2.2 `.gitleaks.toml` を作成する": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260154788
+      },
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788263825260
+      },
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788263920225
+      }
+    ],
+    "2.3 カスタムセキュリティチェックスクリプトを作成する": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260154944
+      },
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788263925130
+      }
+    ],
+    "3. Release ワークフロー（骨組み + テストゲート）の構築": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260155119
+      }
+    ],
+    "4.1 PyInstaller ビルドステップを追加する": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260155273
+      }
+    ],
+    "4.2 ビルド後処理ステップを追加する": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260155469
+      }
+    ],
+    "5. リリース作成の構築": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260155670
+      }
+    ],
+    "6. 自動更新との命名整合性の確認": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260155972
+      }
+    ],
+    "7. ブランチ保護設定の手順書化": [
+      {
+        "executionId": "cf0b07f4-560f-49dd-b146-0fb740995332",
+        "chatSessionId": "sess_15f9d0a8-b634-4b6b-87c4-fccc79b7d684",
+        "timestamp": 1788260156199
+      }
+    ]
+  }
+}

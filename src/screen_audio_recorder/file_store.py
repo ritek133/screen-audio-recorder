@@ -16,7 +16,8 @@ class FileStore:
     要件 8.2: メモをローカルファイルシステム上のユーザーホームディレクトリ配下に保存する。
     """
 
-    _RELATIVE_DIR = Path("Documents") / "screen-audio-recorder" / "recordings"
+    # 保存先は ~/.screen-audio-recorder/recordings/（docstring・テスト・要件 1.3/8.2 と一致）
+    _RELATIVE_DIR = Path(".screen-audio-recorder") / "recordings"
 
     def __init__(self) -> None:
         """FileStore を初期化し、録画ディレクトリを自動作成する."""
