@@ -1,0 +1,18 @@
+# gitleaks 除外設定
+# CI のセキュリティチェック（security ジョブ）で使用するプロジェクト固有の設定。
+# 要件: SEC-6（false positive 対策）／設計書 2A.5 参照
+
+# gitleaks の組み込みデフォルトルールを継承する。
+# カスタム設定ファイルを指定するとデフォルトルールが無効化されるため、
+# useDefault = true を明示してシークレット・AWS キー等の検出（SEC-1, SEC-4）を維持する。
+[extend]
+useDefault = true
+
+# プロジェクト固有の除外ルール（false positive 対策）
+[allowlist]
+description = "プロジェクト固有の許可パス（テスト・ドキュメント・本設定ファイル）"
+paths = [
+    '''tests/.*''',
+    '''docs/.*''',
+    '''.gitleaks.toml''',
+]
