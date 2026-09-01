@@ -317,7 +317,14 @@ class TestMemoStoreJsonPersistence:
         max_size=200,
     ),
 )
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+# deadline=None: 各例でファイル I/O（JSON 保存/読込）を行うため実行時間が環境で変動する。
+# 本テストは timing ではなくラウンドトリップの正確性を検証するため deadline を無効化する
+# （test_memo_pagination と同じ方針）。
+@settings(
+    max_examples=100,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
 def test_memo_round_trip(
     tmp_path: Path,
     body: str,

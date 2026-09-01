@@ -72,6 +72,10 @@ def make_controller(
     # 各コンポーネントのモックを作成
     mock_screen_capture = MagicMock()
     mock_screen_capture.get_frame_queue.return_value = queue.Queue()
+    # actual_resolution はコントローラ側で (width, height) にアンパックされるため、
+    # MagicMock のデフォルト値ではなく実解像度タプルを返すよう明示的に設定する。
+    # （未設定だと MagicMock が返り "not enough values to unpack" となる）
+    mock_screen_capture.actual_resolution = (1920, 1080)
 
     mock_audio_capture = MagicMock()
     mock_audio_capture.get_audio_queue.return_value = queue.Queue()

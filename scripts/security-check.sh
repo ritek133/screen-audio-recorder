@@ -42,6 +42,8 @@ get_changed_files() {
 # false positive 対策として検出対象から除外するパス（設計書 2A.4）。
 # - tests/            : テストコード内のモック値・ダミーデータ
 # - docs/             : ドキュメント内のプレースホルダー例
+# - .kiro/            : Kiro のスペック（設計・タスク管理ファイル）。検出パターンの説明文や
+#                       Unix タイムスタンプ等を含み、機密ではないが誤検知の対象になるため除外
 # - .gitleaks.toml    : gitleaks 設定ファイル自体
 # - .gitignore        : gitignore ファイル自体
 # - scripts/security-check.sh : 本スクリプト自身（検出パターンを含むため）
@@ -49,6 +51,7 @@ is_excluded_path() {
     case "$1" in
         tests/*|*/tests/*) return 0 ;;
         docs/*|*/docs/*) return 0 ;;
+        .kiro/*|*/.kiro/*) return 0 ;;
         .gitleaks.toml) return 0 ;;
         .gitignore) return 0 ;;
         scripts/security-check.sh) return 0 ;;
