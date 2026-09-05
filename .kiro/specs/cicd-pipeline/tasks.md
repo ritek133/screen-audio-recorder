@@ -21,7 +21,7 @@ CI と CD は独立して実装可能です。各タスクには要件トレー�
   - ジョブ名を `test` にする（ブランチ保護のステータスチェック名と一致させる）
   - _要件: CI-1、CI-2、CI-3、CI-4、CI-5、BR-4_
 
-- [ ] 2. セキュリティチェックの構築
+- [x] 2. セキュリティチェックの構築
   - [x] 2.1 `security` ジョブを `ci.yml` に追加する
     - `test` と並列実行される独立ジョブとして `runs-on: ubuntu-latest` で定義する
     - 全履歴を取得するチェックアウト（`fetch-depth: 0`）を行う
@@ -35,7 +35,7 @@ CI と CD は独立して実装可能です。各タスクには要件トレー�
     - `allowlist.paths` に `tests/.*`、`docs/.*`、`.gitleaks.toml` を登録する（false positive 対策）
     - _要件: SEC-6_
 
-  - [-] 2.3 カスタムセキュリティチェックスクリプトを作成する
+  - [x] 2.3 カスタムセキュリティチェックスクリプトを作成する
     - PR 差分ファイルに対して以下を grep で検出する:
       - メールアドレス（`example.com`・`placeholder` を含むものは除外）
       - Windows ローカルパス（`C:\Users\...`）
@@ -51,7 +51,7 @@ CI と CD は独立して実装可能です。各タスクには要件トレー�
     - クリーンな差分ではパスすることを確認する
     - **検証対象: SEC-1〜SEC-7**
 
-- [~] 3. Release ワークフロー（骨組み + テストゲート）の構築
+- [x] 3. Release ワークフロー（骨組み + テストゲート）の構築
   - `.github/workflows/release.yml` を新規作成する
   - トリガーを `push` の `tags: ['v*']` に設定する
   - `release` ジョブを `runs-on: windows-latest` で定義する（PyInstaller で Windows exe を生成するため）
@@ -59,13 +59,13 @@ CI と CD は独立して実装可能です。各タスクには要件トレー�
   - ステップ前半: チェックアウト → Python 3.10 → `pip install -e ".[dev]"` → `pytest`（ビルド前ゲート）
   - _要件: CD-1、CD-2、CD-5、REL-5_
 
-- [ ] 4. ビルドと後処理の構築
-  - [~] 4.1 PyInstaller ビルドステップを追加する
+- [x] 4. ビルドと後処理の構築
+  - [x] 4.1 PyInstaller ビルドステップを追加する
     - PyInstaller をインストールし、`screen_audio_recorder.spec` でビルドする
     - 出力 `dist/screen-audio-recorder/` が生成されることを確認する
     - _要件: CD-3、CD-4_
 
-  - [~] 4.2 ビルド後処理ステップを追加する
+  - [x] 4.2 ビルド後処理ステップを追加する
     - `${{ github.ref_name }}` からタグを取得し、`v` プレフィックスを除去してバージョン番号を抽出する
     - `artifacts/` ディレクトリを作成する
     - exe を `screen-audio-recorder-vX.Y.Z.exe` にリネームコピーする（`Copy-Item`）
@@ -73,7 +73,7 @@ CI と CD は独立して実装可能です。各タスクには要件トレー�
     - zip のルート直下に `screen-audio-recorder.exe` と `_internal/` が並ぶ構造にする
     - _要件: POST-1、POST-2、POST-3、POST-4_
 
-- [~] 5. リリース作成の構築
+- [x] 5. リリース作成の構築
   - `softprops/action-gh-release` を使用してリリース作成ステップを追加する
   - リリース設定: `name` = `Screen Audio Recorder ${{ github.ref_name }}`、`tag` = `${{ github.ref_name }}`
   - `draft: false`、`prerelease: false`（自動更新の対象にするため）
@@ -81,14 +81,14 @@ CI と CD は独立して実装可能です。各タスクには要件トレー�
   - `files` に exe（`artifacts/screen-audio-recorder-v*.exe`）と zip（`artifacts/screen-audio-recorder-v*-full.zip`）の両方を指定する
   - _要件: REL-1、REL-2、REL-3、REL-4、REL-5_
 
-- [~] 6. 自動更新との命名整合性の確認
+- [x] 6. 自動更新との命名整合性の確認
   - `updater.py` のリリース検知ロジックを読み、判定パターンを確認する
     - `*-full.zip` → フル更新、`*.exe` → 通常更新、両方あれば zip 優先
   - Release ワークフローの成果物命名（タスク 4.2）が判定ロジックと完全一致することを検証する
   - 不一致があればタスク 4.2 の命名を修正する
   - _要件: 要件定義書 5 章（自動更新との整合性）、前提条件「自動更新との互換性」_
 
-- [~] 7. ブランチ保護設定の手順書化
+- [x] 7. ブランチ保護設定の手順書化
   - GitHub リポジトリの Settings で行う手動設定のため、手順を `docs/` または README に明記する
     - main への直接 push 禁止（PR 経由のみ）
     - 承認 1 名以上を必須
@@ -97,8 +97,8 @@ CI と CD は独立して実装可能です。各タスクには要件トレー�
   - ステータスチェック名は `ci.yml` のジョブ名（`test`、`security`）と一致させる注意点を記載する
   - _要件: BR-1、BR-2、BR-3、BR-4_
 
-- [ ]* 8. パイプライン全体の動作確認
-  - [ ]* 8.1 CI ワークフローを検証する
+- [x]* 8. パイプライン全体の動作確認
+  - [x]* 8.1 CI ワークフローを検証する
     - テストブランチから main 向け PR を作成し、`test`・`security` ジョブが起動しパスすることを確認する
     - **検証対象: CI-1〜CI-6、SEC-6**
 
