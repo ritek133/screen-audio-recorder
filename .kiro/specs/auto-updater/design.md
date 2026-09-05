@@ -616,10 +616,10 @@ src/screen_audio_recorder/
 
 ### リポジトリ設定
 
-`src/screen_audio_recorder/updater.py` に定数として定義:
+`src/screen_audio_recorder/main.py` に定数として定義:
 
 ```python
-_REPO_OWNER = "taicheng-huang"  # GitHub ユーザー名
+_REPO_OWNER = "ritek133"  # GitHub ユーザー名
 _REPO_NAME = "screen-audio-recorder"  # リポジトリ名
 ```
 

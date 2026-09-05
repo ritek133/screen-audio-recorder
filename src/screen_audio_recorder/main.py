@@ -80,7 +80,7 @@ def _ensure_data_dirs() -> None:
 
 
 # 自動更新用リポジトリ設定
-_REPO_OWNER = "Jeff-Huang"
+_REPO_OWNER = "ritek133"
 _REPO_NAME = "screen-audio-recorder"
 
 
