@@ -7,7 +7,7 @@ name = "screen-audio-recorder"
 version = "0.1.0"
 description = "Windows screen and audio recorder with transcription"
 authors = [
-    {name = "Jeff Huang", email = ""},
+    {name = "Jeff Huang"},
 ]
 license = {text = "Proprietary"}
 requires-python = ">=3.10"
