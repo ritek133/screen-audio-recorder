@@ -614,7 +614,7 @@ class TestMemoStoreIntegration:
 
         mock_memo_store = MagicMock()
 
-        def create_side_effect(text, theme, output_file, summary=""):
+        def create_side_effect(text, theme, output_file, summary="", raw_transcript_file=None):
             call_order.append("create")
 
         mock_memo_store.create.side_effect = create_side_effect

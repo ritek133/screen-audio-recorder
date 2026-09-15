@@ -77,7 +77,14 @@ class MemoStore:
     # パブリック API
     # ------------------------------------------------------------------
 
-    def create(self, text: str, theme: str, output_file: Path, summary: str = "") -> Memo:
+    def create(
+        self,
+        text: str,
+        theme: str,
+        output_file: Path,
+        summary: str = "",
+        raw_transcript_file: Path | None = None,
+    ) -> Memo:
         """メモを作成し保存する.
 
         UUID4 で一意な ID を生成し、UTC タイムスタンプを付与してメモを作成する。
@@ -87,6 +94,8 @@ class MemoStore:
             theme: メモのテーマ（10 文字以内を推奨）
             output_file: 対応する録画・録音ファイルの絶対パス
             summary: 内容要約（デフォルト: 空文字列）
+            raw_transcript_file: 文字起こし生データ（LLM 後処理前）を保存した
+                テキストファイルの絶対パス。保存していない場合は None。
 
         Returns:
             作成された Memo オブジェクト
@@ -100,6 +109,7 @@ class MemoStore:
             body=text,
             summary=summary,
             output_file=output_file,
+            raw_transcript_file=raw_transcript_file,
         )
 
         with FileLock(str(self._lock_path)):
@@ -279,6 +289,11 @@ def _memo_to_dict(memo: Memo) -> dict:
         "body": memo.body,
         "summary": memo.summary,
         "output_file": str(memo.output_file),
+        "raw_transcript_file": (
+            str(memo.raw_transcript_file)
+            if memo.raw_transcript_file is not None
+            else None
+        ),
     }
 
 
@@ -306,6 +321,12 @@ def _dict_to_memo(d: dict) -> Memo:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
 
+    # raw_transcript_file は後方互換のため、キーが無い / None の場合は None を許容する
+    raw_transcript_value = d.get("raw_transcript_file")
+    raw_transcript_file = (
+        Path(raw_transcript_value) if raw_transcript_value else None
+    )
+
     return Memo(
         id=d["id"],
         created_at=created_at,
@@ -313,4 +334,5 @@ def _dict_to_memo(d: dict) -> Memo:
         body=d["body"],
         summary=d.get("summary", ""),
         output_file=Path(d["output_file"]),
+        raw_transcript_file=raw_transcript_file,
     )
