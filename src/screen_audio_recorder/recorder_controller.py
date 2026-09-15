@@ -62,6 +62,7 @@ class RecorderController:
         error_notifier,
         root=None,
         text_post_processor=None,
+        raw_transcript_store=None,
     ) -> None:
         """RecorderController を初期化する.
 
@@ -76,6 +77,8 @@ class RecorderController:
             error_notifier: ErrorNotifier インスタンス
             root: tkinter ルートウィンドウ。None の場合は直接 callback を呼ぶ。
             text_post_processor: TextPostProcessor インスタンス。None の場合は従来のテーマ生成のみ。
+            raw_transcript_store: RawTranscriptStore インスタンス。
+                None の場合は文字起こし生データを別ファイルに保存しない。
         """
         self._screen_capture = screen_capture
         self._audio_capture = audio_capture
@@ -87,6 +90,7 @@ class RecorderController:
         self._error_notifier = error_notifier
         self._root = root
         self._text_post_processor = text_post_processor
+        self._raw_transcript_store = raw_transcript_store
 
         self._is_recording = False
         self._capture_thread: threading.Thread | None = None
@@ -431,6 +435,15 @@ class RecorderController:
         """文字起こし完了時のコールバック."""
         text = result.text
 
+        # 文字起こし生データ（LLM 後処理前）を別ファイルに保存する
+        raw_transcript_file: Path | None = None
+        if self._raw_transcript_store is not None:
+            try:
+                raw_transcript_file = self._raw_transcript_store.save(text, output_path)
+            except Exception:
+                # 生データ保存の失敗はメモ保存を妨げない（本文は別途保持される）
+                logger.exception("文字起こし生データの保存に失敗しました。")
+
         # TextPostProcessor が利用可能な場合は LLM で後処理
         if self._text_post_processor is not None:
             post_result = self._text_post_processor.process(text)
@@ -455,6 +468,7 @@ class RecorderController:
             theme=theme,
             output_file=output_path,
             summary=summary,
+            raw_transcript_file=raw_transcript_file,
         )
         logger.info("メモを保存しました。テーマ: %s", theme)
 

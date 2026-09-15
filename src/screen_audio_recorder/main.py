@@ -68,14 +68,15 @@ def _ensure_data_dirs() -> None:
     """データディレクトリ構造を初回起動時に自動作成する.
 
     作成するディレクトリ:
-        ~/.screen-audio-recorder/
-        ~/.screen-audio-recorder/recordings/
-        ~/.screen-audio-recorder/models/
+        ~/Documents/screen-audio-recorder/
+        ~/Documents/screen-audio-recorder/recordings/
+        ~/Documents/screen-audio-recorder/models/
+        ~/Documents/screen-audio-recorder/transcripts/
 
     要件 1.3: ユーザーのホームディレクトリ配下にのみファイルを書き込む。
     """
     base = Path.home() / "Documents" / "screen-audio-recorder"
-    for subdir in ("", "recordings", "models"):
+    for subdir in ("", "recordings", "models", "transcripts"):
         (base / subdir).mkdir(parents=True, exist_ok=True)
 
 
@@ -130,6 +131,7 @@ def main() -> None:
     from screen_audio_recorder.llm_client import LlmClient
     from screen_audio_recorder.llm_settings_store import load_all_settings as _load_all_settings, load_settings as load_llm_settings
     from screen_audio_recorder.memo_store import MemoStore
+    from screen_audio_recorder.raw_transcript_store import RawTranscriptStore
     from screen_audio_recorder.recorder_controller import RecorderController
     from screen_audio_recorder.screen_capture import ScreenCapture
     from screen_audio_recorder.text_post_processor import TextPostProcessor
@@ -145,6 +147,7 @@ def main() -> None:
     error_notifier = ErrorNotifier(root=root)
     memo_store = MemoStore()
     file_store = FileStore()
+    raw_transcript_store = RawTranscriptStore()
     screen_capture = ScreenCapture()
     audio_capture = AudioCapture(error_notifier=error_notifier)
     video_encoder = VideoEncoder(error_notifier=error_notifier)
@@ -202,6 +205,7 @@ def main() -> None:
         error_notifier=error_notifier,
         root=root,
         text_post_processor=text_post_processor,
+        raw_transcript_store=raw_transcript_store,
     )
 
     # Updater の初期化

@@ -96,6 +96,8 @@ class Memo:
         body: 文字起こし全文（修正済み）
         summary: 内容要約
         output_file: OutputFile への絶対パス
+        raw_transcript_file: 文字起こし生データ（LLM 後処理前）を保存した
+            テキストファイルへの絶対パス。生データが保存されていない場合は None。
     """
 
     id: str
@@ -104,6 +106,7 @@ class Memo:
     body: str
     summary: str
     output_file: Path
+    raw_transcript_file: Path | None = None
 
 
 @dataclass
