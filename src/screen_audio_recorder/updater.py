@@ -485,6 +485,15 @@ if %ERRORLEVEL%==0 (
     goto :wait_loop
 )
 
+echo Backing up current exe...
+del /F /Q "%BACKUP_EXE%" 2>NUL
+move /Y "%TARGET_EXE%" "%BACKUP_EXE%"
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to create backup. Aborting update and keeping current version.
+    start "" "%TARGET_EXE%"
+    goto :cleanup
+)
+
 echo Moving new exe to target path...
 move /Y "%NEW_EXE%" "%TARGET_EXE%"
 if %ERRORLEVEL% NEQ 0 (
@@ -528,11 +537,20 @@ if %ERRORLEVEL%==0 (
     goto :wait_loop
 )
 
+echo Backing up current files...
+rmdir /S /Q "%BACKUP_DIR%" 2>NUL
+move /Y "%TARGET_DIR%" "%BACKUP_DIR%"
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to create backup. Aborting update and keeping current version.
+    start "" "%TARGET_DIR%\%EXE_NAME%"
+    goto :cleanup
+)
+
 echo Moving new files to target path...
-rmdir /S /Q "%TARGET_DIR%" 2>NUL
 move /Y "%NEW_DIR%" "%TARGET_DIR%"
 if %ERRORLEVEL% NEQ 0 (
     echo Failed to move new files. Restoring backup...
+    rmdir /S /Q "%TARGET_DIR%" 2>NUL
     move /Y "%BACKUP_DIR%" "%TARGET_DIR%"
     start "" "%TARGET_DIR%\%EXE_NAME%"
     goto :cleanup
@@ -631,10 +649,17 @@ del "%~f0"
         self._app_dir = app_dir
 
     def create_backup(self, current_version: str, update_type: UpdateType) -> BackupInfo:
-        """現在のファイルをバックアップする.
+        """バックアップ先パスを確定する.
 
-        通常更新: exe を `{exe_name_without_ext}-v{version}.exe.bak` にリネーム
-        フル更新: app_dir を `app-backup-v{version}` にリネーム
+        通常更新: `{exe_name_without_ext}-v{version}.exe.bak`
+        フル更新: `app-backup-v{version}`
+
+        Note:
+            実際のリネーム（退避）はここでは行わない。実行中プロセスが自身の
+            exe/app_dir をリネームすると Windows のファイルロックにより
+            ``WinError 32``（別プロセス使用中）が発生するため、退避処理は
+            プロセス終了を待つ更新バッチスクリプト内で実施する。ここでは
+            バックアップ先パスの情報のみを確定して返す。
 
         Args:
             current_version: 現在のバージョン文字列
@@ -644,37 +669,19 @@ del "%~f0"
             BackupInfo: バックアップパスとバージョン情報
 
         Raises:
-            ApplyError: リネーム失敗時
+            ApplyError: バックアップ先パス確定に失敗した場合
         """
         if update_type == UpdateType.EXE_ONLY:
-            # 通常更新: exe を screen-audio-recorder-v0.1.0.exe.bak にリネーム
+            # 通常更新: screen-audio-recorder-v0.1.0.exe.bak
             exe_stem = self._exe_path.stem  # e.g. "screen-audio-recorder"
             backup_name = f"{exe_stem}-v{current_version}.exe.bak"
             backup_path = self._exe_path.parent / backup_name
         else:
-            # フル更新: app_dir を app-backup-v0.1.0 にリネーム
+            # フル更新: app-backup-v0.1.0
             backup_name = f"app-backup-v{current_version}"
             backup_path = self._app_dir.parent / backup_name
 
         logger.debug("バックアップ先パス: %s", backup_path)
-
-        try:
-            if update_type == UpdateType.EXE_ONLY:
-                logger.debug("リネーム元パス: %s -> %s", self._exe_path, backup_path)
-                self._exe_path.rename(backup_path)
-            else:
-                logger.debug("リネーム元パス: %s -> %s", self._app_dir, backup_path)
-                self._app_dir.rename(backup_path)
-        except OSError as e:
-            logger.error(
-                "バックアップ作成失敗 source_path=%s dest_path=%s OSError=%s",
-                self._exe_path if update_type == UpdateType.EXE_ONLY else self._app_dir,
-                backup_path,
-                str(e),
-            )
-            raise ApplyError(
-                f"バックアップ作成に失敗しました: {e}"
-            ) from e
 
         backup_info = BackupInfo(
             backup_path=backup_path,
@@ -684,7 +691,7 @@ del "%~f0"
         )
 
         logger.info(
-            "バックアップ作成完了 path=%s version=%s",
+            "バックアップ先を確定 path=%s version=%s (退避は更新スクリプトで実施)",
             backup_path,
             current_version,
         )

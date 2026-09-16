@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "main ブランチでの編集をブロック",
+      "trigger": "PreToolUse",
+      "description": "現在のブランチが main/master の場合、ファイル編集系ツールの実行をブロックし、先に作業ブランチを作成するよう促す",
+      "matcher": "fs_write|str_replace|fs_append",
+      "action": {
+        "type": "command",
+        "command": "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); if [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"master\" ]; then echo \"現在のブランチは '$branch' です。main/master 上で直接ファイルを編集できません。先に作業ブランチを作成してください（例: git checkout -b fix/xxx）。mainを最新化してからブランチを切る運用を推奨します。\" 1>&2; exit 2; fi; exit 0"
+      }
+    }
+  ]
+}

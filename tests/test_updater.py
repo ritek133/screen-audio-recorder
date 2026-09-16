@@ -585,8 +585,12 @@ from screen_audio_recorder.updater_models import ApplyError, BackupInfo
 class TestUpdateApplierCreateBackup:
     """UpdateApplier.create_backup() のテスト."""
 
-    def test_exe_only_backup_renames_exe(self, tmp_path: Path) -> None:
-        """通常更新: exe を {stem}-v{version}.exe.bak にリネームする."""
+    def test_exe_only_backup_returns_path_without_renaming(self, tmp_path: Path) -> None:
+        """通常更新: バックアップ先パスを確定し、実行中 exe はリネームしない.
+
+        実行中プロセスが自身の exe をリネームすると WinError 32 が発生するため、
+        退避は更新バッチスクリプトに委ね、ここではパス情報のみ確定する。
+        """
         exe_path = tmp_path / "screen-audio-recorder.exe"
         exe_path.write_bytes(b"fake exe content")
         app_dir = tmp_path / "app"
@@ -597,13 +601,14 @@ class TestUpdateApplierCreateBackup:
 
         expected_backup = tmp_path / "screen-audio-recorder-v0.1.0.exe.bak"
         assert result.backup_path == expected_backup
-        assert expected_backup.exists()
-        assert not exe_path.exists()
+        # 退避は行わないため、元 exe は残り、バックアップはまだ存在しない
+        assert exe_path.exists()
+        assert not expected_backup.exists()
         assert result.version == "0.1.0"
         assert result.update_type == UpdateType.EXE_ONLY
 
-    def test_full_backup_renames_app_dir(self, tmp_path: Path) -> None:
-        """フル更新: app_dir を app-backup-v{version} にリネームする."""
+    def test_full_backup_returns_path_without_renaming(self, tmp_path: Path) -> None:
+        """フル更新: バックアップ先パスを確定し、app_dir はリネームしない."""
         exe_path = tmp_path / "app" / "screen-audio-recorder.exe"
         app_dir = tmp_path / "app"
         app_dir.mkdir()
@@ -615,34 +620,25 @@ class TestUpdateApplierCreateBackup:
 
         expected_backup = tmp_path / "app-backup-v1.2.3"
         assert result.backup_path == expected_backup
-        assert expected_backup.exists()
-        assert expected_backup.is_dir()
-        assert not app_dir.exists()
+        # 退避は行わないため、元 app_dir は残り、バックアップはまだ存在しない
+        assert app_dir.exists()
+        assert not expected_backup.exists()
         assert result.version == "1.2.3"
         assert result.update_type == UpdateType.FULL
 
+    def test_backup_does_not_require_source_to_exist(self, tmp_path: Path) -> None:
+        """退避を行わないため、実ファイルが無くてもパス確定は成功する.
 
-class TestUpdateApplierCreateBackupFailure:
-    """UpdateApplier.create_backup() の失敗テスト."""
-
-    def test_exe_not_exists_raises_apply_error(self, tmp_path: Path) -> None:
-        """存在しない exe をバックアップしようとすると ApplyError が発生する."""
+        （実際の退避可否はプロセス終了後にバッチが判断する）
+        """
         exe_path = tmp_path / "nonexistent.exe"
         app_dir = tmp_path / "app"
         app_dir.mkdir()
 
         applier = UpdateApplier(exe_path=exe_path, app_dir=app_dir)
-        with pytest.raises(ApplyError):
-            applier.create_backup("0.1.0", UpdateType.EXE_ONLY)
+        result = applier.create_backup("0.1.0", UpdateType.EXE_ONLY)
 
-    def test_app_dir_not_exists_raises_apply_error(self, tmp_path: Path) -> None:
-        """存在しない app_dir をバックアップしようとすると ApplyError が発生する."""
-        exe_path = tmp_path / "app" / "screen-audio-recorder.exe"
-        app_dir = tmp_path / "app"  # 存在しない
-
-        applier = UpdateApplier(exe_path=exe_path, app_dir=app_dir)
-        with pytest.raises(ApplyError):
-            applier.create_backup("0.1.0", UpdateType.FULL)
+        assert result.backup_path == tmp_path / "nonexistent-v0.1.0.exe.bak"
 
 
 class TestUpdateApplierGenerateUpdateScript:
