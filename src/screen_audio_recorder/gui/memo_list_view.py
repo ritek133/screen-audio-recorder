@@ -27,6 +27,16 @@ _PAGE_SIZE = 50
 # 本文プレビューの最大文字数
 _PREVIEW_MAX_CHARS = 50
 
+# 全文ペイン表示用の1論理行あたりの最大文字数。
+# tkinter.Text は1論理行（改行区切り）が長すぎると表示が途中で打ち切られる
+# 既知の制限がある。文字起こし本文は改行がほとんど無く巨大な1行になりやすいため、
+# 表示時にこの文字数を上限として改行を挿入し、全文が表示されるようにする。
+# （保存データ body 自体は変更しない）
+_DISPLAY_LINE_MAX_CHARS = 1000
+
+# 表示用改行を挿入する文の区切り文字（この直後で改行する）
+_DISPLAY_SENTENCE_BOUNDARIES = ("。", "！", "？")
+
 
 class MemoListView:
     """メモを時間軸順に一覧表示する UI コンポーネント.
@@ -323,9 +333,11 @@ class MemoListView:
         self._summary_text.config(state=tk.DISABLED)
 
         # 全文を詳細ペインに表示
+        # tkinter.Text の1論理行が長すぎると表示が途中で切れるため、
+        # 表示用に改行を挿入する（保存データ body 自体は変更しない）。
         self._detail_text.config(state=tk.NORMAL)
         self._detail_text.delete("1.0", tk.END)
-        self._detail_text.insert("1.0", memo.body)
+        self._detail_text.insert("1.0", format_body_for_display(memo.body))
         self._detail_text.config(state=tk.DISABLED)
 
         # 再生・削除・再処理ボタンを有効化
@@ -582,3 +594,61 @@ class MemoListView:
             if memo.id == memo_id:
                 return memo
         return None
+
+
+# ---------------------------------------------------------------------------
+# 表示用ユーティリティ
+# ---------------------------------------------------------------------------
+
+
+def format_body_for_display(
+    body: str,
+    line_max_chars: int = _DISPLAY_LINE_MAX_CHARS,
+) -> str:
+    """全文ペイン表示用に、長い本文へ改行を挿入する.
+
+    tkinter.Text は1論理行（改行区切り）が長すぎると表示が途中で打ち切られる
+    既知の制限がある。文字起こし本文は句読点や改行が少なく巨大な1行になりやすい
+    ため、表示前に以下のルールで改行を挿入して1論理行を短く保つ。
+
+    1. 句点・感嘆符・疑問符（。！？）の直後で改行する（読みやすさ重視）。
+    2. それでも1行が ``line_max_chars`` を超える場合は、その位置で強制改行する。
+
+    保存データ（body 本体）は変更せず、あくまで表示用の整形のみを行う。
+    元の改行はそのまま尊重する。
+
+    Args:
+        body: メモ本文（保存されている生の文字列）。
+        line_max_chars: 1論理行あたりの最大文字数（正の値）。
+
+    Returns:
+        表示用に改行を挿入した文字列。
+    """
+    if not body:
+        return body
+    if line_max_chars <= 0:
+        return body
+
+    result_chars: list[str] = []
+    current_line_len = 0
+
+    for char in body:
+        result_chars.append(char)
+
+        if char == "\n":
+            # 既存の改行でカウンタをリセット
+            current_line_len = 0
+            continue
+
+        current_line_len += 1
+
+        if char in _DISPLAY_SENTENCE_BOUNDARIES:
+            # 文の区切りの直後で改行（読みやすさ重視）
+            result_chars.append("\n")
+            current_line_len = 0
+        elif current_line_len >= line_max_chars:
+            # 句点が現れないまま上限に達したら強制改行
+            result_chars.append("\n")
+            current_line_len = 0
+
+    return "".join(result_chars)

@@ -13,7 +13,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from screen_audio_recorder.gui.memo_list_view import MemoListView, _PREVIEW_MAX_CHARS
+from screen_audio_recorder.gui.memo_list_view import (
+    MemoListView,
+    _PREVIEW_MAX_CHARS,
+    _DISPLAY_LINE_MAX_CHARS,
+    format_body_for_display,
+)
 from screen_audio_recorder.models import Memo, MemoPage
 
 
@@ -273,3 +278,50 @@ class TestGetPreviewTextBoundary:
         result = MemoListView.get_preview_text(body)
         assert len(result) <= 50
         assert body.startswith(result)
+
+
+# ---------------------------------------------------------------------------
+# format_body_for_display のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestFormatBodyForDisplay:
+    """全文ペイン表示用の改行挿入ロジックのテスト."""
+
+    def test_empty_returns_empty(self) -> None:
+        """空文字列はそのまま返す."""
+        assert format_body_for_display("") == ""
+
+    def test_no_data_loss_when_newlines_removed(self) -> None:
+        """挿入した改行を取り除くと元の本文に一致する（データ欠落なし）."""
+        body = "これはテストです。" * 500  # 句点あり長文
+        formatted = format_body_for_display(body)
+        assert formatted.replace("\n", "") == body
+
+    def test_newline_inserted_after_sentence_boundary(self) -> None:
+        """句点・感嘆符・疑問符の直後で改行される."""
+        assert format_body_for_display("あ。い！う？え") == "あ。\nい！\nう？\nえ"
+
+    def test_long_line_without_boundary_is_force_wrapped(self) -> None:
+        """句点が無い長文でも各論理行が上限文字数以下になる."""
+        body = "あ" * 3500  # 句点なし
+        formatted = format_body_for_display(body, line_max_chars=1000)
+        lines = formatted.split("\n")
+        assert all(len(line) <= 1000 for line in lines)
+        # データ欠落がないこと
+        assert formatted.replace("\n", "") == body
+
+    def test_existing_newlines_reset_line_count(self) -> None:
+        """既存の改行は尊重され、行カウントがリセットされる."""
+        body = "あ" * 500 + "\n" + "い" * 500
+        formatted = format_body_for_display(body, line_max_chars=1000)
+        # 既存の改行位置で分かれ、強制改行は入らない（各行 500 文字）
+        assert formatted == body
+
+    def test_long_line_10000_chars_all_lines_within_limit(self) -> None:
+        """1万文字超の句点なし本文でも全論理行が上限以下（表示切れ回避）."""
+        body = "テスト" * 4000  # 12000 文字・句点なし
+        formatted = format_body_for_display(body, line_max_chars=1000)
+        lines = formatted.split("\n")
+        assert all(len(line) <= 1000 for line in lines)
+        assert formatted.replace("\n", "") == body
