@@ -186,6 +186,7 @@ class MainWindow:
             text_post_processor=getattr(self._recorder_controller, "_text_post_processor", None),
             transcriber=getattr(self._recorder_controller, "_transcriber", None),
             root=self._root,
+            raw_transcript_store=getattr(self._recorder_controller, "_raw_transcript_store", None),
         )
         self._memo_list_view.frame.pack(fill=tk.BOTH, expand=True)
 

@@ -82,6 +82,25 @@ class TestRawTranscriptStoreSave:
         path = store.save("text", tmp_path / "rec.mp4")
         assert path.parent == store.base_dir
 
+    def test_save_overwrite_reuses_same_path(
+        self, store: RawTranscriptStore, tmp_path: Path
+    ) -> None:
+        """overwrite=True の場合、同名ファイルを連番なしで上書きする（再文字起こし用）."""
+        output = tmp_path / "rec.mp4"
+        path1 = store.save("最初", output)
+        path2 = store.save("再文字起こし後", output, overwrite=True)
+        # 同じパスに上書きされる
+        assert path1 == path2
+        assert path2.read_text(encoding="utf-8") == "再文字起こし後"
+
+    def test_save_overwrite_creates_file_when_absent(
+        self, store: RawTranscriptStore, tmp_path: Path
+    ) -> None:
+        """overwrite=True でも既存ファイルが無ければ新規作成する."""
+        path = store.save("text", tmp_path / "rec.mp4", overwrite=True)
+        assert path.exists()
+        assert path.name == "rec.txt"
+
     def test_save_invalid_stem_falls_back(
         self, store: RawTranscriptStore, tmp_path: Path
     ) -> None:

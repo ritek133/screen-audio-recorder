@@ -41,7 +41,7 @@ class MemoListView:
         frame: 外部から参照可能なルートフレーム
     """
 
-    def __init__(self, parent: tk.Widget, memo_store: MemoStore, text_post_processor=None, transcriber=None, root=None) -> None:
+    def __init__(self, parent: tk.Widget, memo_store: MemoStore, text_post_processor=None, transcriber=None, root=None, raw_transcript_store=None) -> None:
         """MemoListView を初期化する.
 
         Args:
@@ -50,11 +50,14 @@ class MemoListView:
             text_post_processor: TextPostProcessor インスタンス（再処理用）
             transcriber: Transcriber インスタンス（再文字起こし用）
             root: tkinter ルートウィンドウ（スレッド通知用）
+            raw_transcript_store: RawTranscriptStore インスタンス（再文字起こし時の
+                生データ保存用）。None の場合は再文字起こし時に生データを保存しない。
         """
         self._memo_store = memo_store
         self._text_post_processor = text_post_processor
         self._transcriber = transcriber
         self._root = root
+        self._raw_transcript_store = raw_transcript_store
         self._current_page = 1
         self._total_pages = 1
         self._memos: list[Memo] = []
@@ -536,6 +539,19 @@ class MemoListView:
 
                 text = result.text
 
+                # 文字起こし生データ（LLM 後処理前）を上書き保存する。
+                # 初回録画時と同じファイル名（録画ファイル名ベース）で上書きし、
+                # メモと生データの 1 対 1 対応を保つ。
+                raw_transcript_file = None
+                if self._raw_transcript_store is not None:
+                    try:
+                        raw_transcript_file = self._raw_transcript_store.save(
+                            text, memo.output_file, overwrite=True
+                        )
+                    except Exception:
+                        # 生データ保存の失敗はメモ更新を妨げない
+                        logger.exception("文字起こし生データの保存に失敗しました: %s", memo.id)
+
                 # TextPostProcessor が利用可能な場合は LLM で後処理
                 if self._text_post_processor is not None and text:
                     post_result = self._text_post_processor.process(text)
@@ -553,6 +569,7 @@ class MemoListView:
                     body=corrected_text,
                     theme=theme,
                     summary=summary,
+                    raw_transcript_file=raw_transcript_file,
                 )
                 logger.info("再文字起こし完了: %s", memo.id)
             except Exception:

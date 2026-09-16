@@ -201,7 +201,14 @@ class MemoStore:
                     self._save_raw(data)
                     return
 
-    def update_memo(self, memo_id: str, body: str, theme: str, summary: str) -> None:
+    def update_memo(
+        self,
+        memo_id: str,
+        body: str,
+        theme: str,
+        summary: str,
+        raw_transcript_file: Path | None = None,
+    ) -> None:
         """メモの本文・テーマ・要約を更新する.
 
         Args:
@@ -209,6 +216,9 @@ class MemoStore:
             body: 新しい本文
             theme: 新しいテーマ
             summary: 新しい要約
+            raw_transcript_file: 文字起こし生データ（LLM 後処理前）を保存した
+                テキストファイルの絶対パス。None の場合は生データパスを更新しない
+                （既存の値を保持する）。
         """
         with FileLock(str(self._lock_path)):
             data = self._load_raw()
@@ -217,6 +227,8 @@ class MemoStore:
                     d["body"] = body
                     d["theme"] = theme
                     d["summary"] = summary
+                    if raw_transcript_file is not None:
+                        d["raw_transcript_file"] = str(raw_transcript_file)
                     self._save_raw(data)
                     return
 

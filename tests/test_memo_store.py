@@ -461,3 +461,54 @@ def test_memo_pagination(
             f" (n={n}, page_size={page_size})"
         )
         assert page.total == n
+
+
+# ---------------------------------------------------------------------------
+# ユニットテスト: update_memo
+# ---------------------------------------------------------------------------
+
+
+class TestMemoStoreUpdateMemo:
+    """update_memo() のテスト（再文字起こし時の更新を含む）."""
+
+    def test_update_memo_updates_body_theme_summary(self, store: MemoStore) -> None:
+        """本文・テーマ・要約が更新される."""
+        memo = store.create(text="旧本文", theme="旧テーマ", output_file=Path("rec.mp4"), summary="旧要約")
+        store.update_memo(memo_id=memo.id, body="新本文", theme="新テーマ", summary="新要約")
+        updated = store.get_by_id(memo.id)
+        assert updated is not None
+        assert updated.body == "新本文"
+        assert updated.theme == "新テーマ"
+        assert updated.summary == "新要約"
+
+    def test_update_memo_updates_raw_transcript_file(self, store: MemoStore) -> None:
+        """raw_transcript_file を指定すると更新される（再文字起こし時）."""
+        memo = store.create(
+            text="本文",
+            theme="テーマ",
+            output_file=Path("rec.mp4"),
+            raw_transcript_file=Path("old.txt"),
+        )
+        store.update_memo(
+            memo_id=memo.id,
+            body="本文",
+            theme="テーマ",
+            summary="",
+            raw_transcript_file=Path("new.txt"),
+        )
+        updated = store.get_by_id(memo.id)
+        assert updated is not None
+        assert updated.raw_transcript_file == Path("new.txt")
+
+    def test_update_memo_keeps_raw_transcript_when_none(self, store: MemoStore) -> None:
+        """raw_transcript_file=None の場合は既存の生データパスを保持する."""
+        memo = store.create(
+            text="本文",
+            theme="テーマ",
+            output_file=Path("rec.mp4"),
+            raw_transcript_file=Path("keep.txt"),
+        )
+        store.update_memo(memo_id=memo.id, body="更新本文", theme="テーマ", summary="")
+        updated = store.get_by_id(memo.id)
+        assert updated is not None
+        assert updated.raw_transcript_file == Path("keep.txt")
