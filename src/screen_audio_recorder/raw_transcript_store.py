@@ -54,7 +54,7 @@ class RawTranscriptStore:
         """生データの保存先ディレクトリを返す."""
         return self._base_dir
 
-    def save(self, text: str, output_file: Path) -> Path:
+    def save(self, text: str, output_file: Path, *, overwrite: bool = False) -> Path:
         """文字起こし生テキストを個別ファイルに保存し、パスを返す.
 
         ファイル名は ``output_file`` のファイル名（拡張子を除く）に基づき、
@@ -65,12 +65,18 @@ class RawTranscriptStore:
             text: 保存する文字起こし生テキスト（LLM 後処理前）。
             output_file: 対応する録画・録音ファイルのパス。ファイル名の
                 決定に使用する。
+            overwrite: True の場合、同名ファイルが既に存在してもそのまま
+                上書きする（再文字起こし用）。False の場合は連番を付与して
+                衝突を避ける（初回保存用）。
 
         Returns:
             保存した生データファイルの絶対パス。
         """
         filename = self._build_filename(output_file)
-        transcript_path = self._resolve_unique_path(filename)
+        if overwrite:
+            transcript_path = self._base_dir / filename
+        else:
+            transcript_path = self._resolve_unique_path(filename)
 
         transcript_path.write_text(text, encoding="utf-8")
         logger.info(
