@@ -40,3 +40,10 @@ Desktop.ini
 # Infra secrets
 infra/**/.env
 *.env
+
+# サイトサンプルのプレビュー用にコピーした実データ（個人的な本文を含むためコミットしない）
+docs/site-samples/memos.json
+# 大規模スケール検証用の生成データ（サイズが大きいためコミットしない。生成スクリプトで再生成可能）
+docs/site-samples/memos.big.json
+# 実データ memos.json はどこに置かれてもコミットしない（個人的な本文を含む）
+memos.json
