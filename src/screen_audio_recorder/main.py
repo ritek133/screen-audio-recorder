@@ -146,6 +146,12 @@ def main() -> None:
     # コンポーネントを初期化
     error_notifier = ErrorNotifier(root=root)
     memo_store = MemoStore()
+
+    # メモエクスポート機能（HTML 継続出力）を初期化し、MemoStore の変更を購読する
+    from screen_audio_recorder.export import ExportManager
+    export_manager = ExportManager(memo_store=memo_store)
+    export_manager.start()
+
     file_store = FileStore()
     raw_transcript_store = RawTranscriptStore()
     screen_capture = ScreenCapture()
@@ -230,6 +236,7 @@ def main() -> None:
         audio_capture=audio_capture,
         on_llm_settings_changed=on_llm_settings_changed,
         updater=updater,
+        export_manager=export_manager,
     )
 
     logger.info("アプリケーションの初期化が完了しました。")
@@ -254,6 +261,11 @@ def main() -> None:
                 recorder_controller.stop_recording()
             except Exception:
                 logger.exception("終了時の録画停止に失敗しました。")
+        # メモエクスポートの購読を解除し、保留中のタイマーを取り消す
+        try:
+            export_manager.stop()
+        except Exception:
+            logger.exception("エクスポートマネージャの停止に失敗しました。")
         # ローカル LLM サーバーを停止
         llm_client.shutdown()
         logger.info("screen-audio-recorder を終了しました。")

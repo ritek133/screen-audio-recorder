@@ -17,6 +17,7 @@ from screen_audio_recorder.models import AwsSettings, LlmSettings, RecordingMode
 
 if TYPE_CHECKING:
     from screen_audio_recorder.audio_capture import AudioCapture
+    from screen_audio_recorder.export import ExportManager
     from screen_audio_recorder.memo_store import MemoStore
     from screen_audio_recorder.recorder_controller import RecorderController
     from screen_audio_recorder.updater import Updater
@@ -49,6 +50,7 @@ class MainWindow:
         audio_capture: AudioCapture,
         on_llm_settings_changed: callable | None = None,
         updater: "Updater | None" = None,
+        export_manager: "ExportManager | None" = None,
     ) -> None:
         """MainWindow を初期化する.
 
@@ -59,6 +61,7 @@ class MainWindow:
             audio_capture: 音声キャプチャ（マイクデバイス一覧取得に使用）
             on_llm_settings_changed: LLM 設定変更時のコールバック
             updater: Updater インスタンス（None の場合は更新機能無効）
+            export_manager: メモエクスポートマネージャ（None の場合はエクスポート設定タブ無効）
         """
         self._root = root
         self._recorder_controller = recorder_controller
@@ -66,6 +69,7 @@ class MainWindow:
         self._audio_capture = audio_capture
         self._on_llm_settings_changed = on_llm_settings_changed
         self._updater = updater
+        self._export_manager = export_manager
 
         self._root.title("Screen Audio Recorder")
         self._root.resizable(True, True)
@@ -204,6 +208,19 @@ class MainWindow:
 
         self._advanced_settings_tab = AdvancedSettingsTab(self._notebook)
         self._notebook.add(self._advanced_settings_tab.frame, text="詳細設定")
+
+        # --- メモ出力タブ（エクスポート設定）---
+        if self._export_manager is not None:
+            from screen_audio_recorder.gui.memo_export_settings_tab import (
+                MemoExportSettingsTab,
+            )
+
+            self._memo_export_settings_tab = MemoExportSettingsTab(
+                self._notebook,
+                on_settings_changed=self._export_manager.update_settings,
+                on_export_now=self._export_manager.export_now,
+            )
+            self._notebook.add(self._memo_export_settings_tab.frame, text="メモ出力")
 
         # --- バージョン情報タブ ---
         from screen_audio_recorder.gui.about_tab import AboutTab

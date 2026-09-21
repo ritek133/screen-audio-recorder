@@ -280,3 +280,25 @@ class AppSettings:
     """
 
     verbose_logging: bool = False
+
+
+@dataclass
+class ExportSettings:
+    """メモエクスポート機能の設定を表すデータクラス.
+
+    ADR-004 参照。第1弾では HTML 継続出力のみを対象とする。
+
+    Attributes:
+        html_enabled: HTML への継続出力を有効にするかどうか。
+            True の場合、メモの追加・更新・削除のたびに HTML を再生成する。
+        output_dir: HTML の出力先ディレクトリ。空文字列の場合は既定パス
+            （``~/Documents/screen-audio-recorder/export``）を後段で解決する。
+            プライバシー保護のため、絶対フルパスをデフォルト値にしない。
+        include_output_file_path: 出力する HTML に ``output_file``
+            （録画ファイルのローカルパス）を含めるかどうか。
+            既定は False（ローカルフルパスを外部出力しない）。
+    """
+
+    html_enabled: bool = False
+    output_dir: str = ""
+    include_output_file_path: bool = False
