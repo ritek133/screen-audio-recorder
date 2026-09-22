@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "screen-audio-recorder"
-version = "0.1.1"
+version = "0.2.0"
 description = "Windows screen and audio recorder with transcription"
 authors = [
     {name = "Jeff Huang"},
