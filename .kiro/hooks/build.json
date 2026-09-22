@@ -4,6 +4,7 @@
     {
       "name": "build",
       "trigger": "Manual",
+      "description": "PyInstaller ビルドをバックグラウンドで起動する。進捗は logs/build_status.txt に出力され、scripts/build-watch.ps1 で監視できる。",
       "action": {
         "type": "command",
         "command": "powershell -NoProfile -Command \"Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','scripts\\build.bat' -WindowStyle Hidden; Write-Host 'ビルドをバックグラウンドで開始しました。監視: powershell -File scripts/build-watch.ps1'\""
