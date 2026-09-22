@@ -246,6 +246,17 @@ class AboutTab:
         # ステータスラベルを更新
         self._status_label.configure(text=text, fg=color)
 
+        # 適用/完了/エラー時は進捗ダイアログを閉じる
+        # （正常完了時にダイアログが 100% のまま残るのを防ぐ）
+        if status.state in (
+            UpdateState.APPLYING,
+            UpdateState.COMPLETED,
+            UpdateState.ERROR,
+        ):
+            if getattr(self, "_progress_dialog", None) is not None:
+                self._progress_dialog.close()
+                self._progress_dialog = None
+
         # ボタン状態の復元（確認完了後）
         if status.state in (
             UpdateState.UPDATE_AVAILABLE,
