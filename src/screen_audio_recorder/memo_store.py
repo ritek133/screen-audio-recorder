@@ -7,14 +7,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 from filelock import FileLock
 
 from screen_audio_recorder.models import Memo, MemoPage
+
+logger = logging.getLogger(__name__)
 
 # JSON スキーマバージョン
 _SCHEMA_VERSION = 1
@@ -65,6 +69,9 @@ class MemoStore:
         self._data_path = data_path
         self._lock_path = data_path.with_suffix(".json.lock")
 
+        # 変更通知リスナー（メモの追加・更新・削除時に呼ばれる）
+        self._listeners: list[Callable[[], None]] = []
+
         # データディレクトリを自動作成
         self._data_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +79,44 @@ class MemoStore:
     def data_path(self) -> Path:
         """データファイルのパスを返す."""
         return self._data_path
+
+    # ------------------------------------------------------------------
+    # 変更通知（オブザーバー）
+    # ------------------------------------------------------------------
+
+    def add_listener(self, callback: Callable[[], None]) -> None:
+        """メモ変更時に呼ばれるリスナーを登録する.
+
+        メモの追加（create）・更新（update_memo / update_theme）・削除（delete）が
+        行われ、実際に memos.json が書き換わったときに、登録済みの各リスナーが
+        引数なしで呼び出される。ADR-004 の継続出力（HTML）のフック点として使う。
+
+        通知はファイルロックの解放後に行われるため、リスナー内で本ストアの
+        読み取りメソッド（get_all 等）を安全に呼び出せる。
+
+        Args:
+            callback: 変更時に呼ばれる引数なしのコールバック
+        """
+        self._listeners.append(callback)
+
+    def remove_listener(self, callback: Callable[[], None]) -> None:
+        """登録済みのリスナーを解除する（登録されていない場合は無視）."""
+        try:
+            self._listeners.remove(callback)
+        except ValueError:
+            pass
+
+    def _notify_listeners(self) -> None:
+        """登録済みの全リスナーを呼び出す.
+
+        個々のリスナーで例外が発生しても、他のリスナーの実行やメモ保存自体を
+        妨げないよう、例外はログに記録して握りつぶす。
+        """
+        for callback in list(self._listeners):
+            try:
+                callback()
+            except Exception:
+                logger.exception("メモ変更リスナーの実行に失敗しました。")
 
     # ------------------------------------------------------------------
     # パブリック API
@@ -117,6 +162,7 @@ class MemoStore:
             data["memos"].append(_memo_to_dict(memo))
             self._save_raw(data)
 
+        self._notify_listeners()
         return memo
 
     def get_all(self, page: int = 1, page_size: int = 50) -> MemoPage:
@@ -179,12 +225,17 @@ class MemoStore:
 
     def delete(self, memo_id: str) -> None:
         """メモを削除する."""
+        changed = False
         with FileLock(str(self._lock_path)):
             data = self._load_raw()
             original_count = len(data["memos"])
             data["memos"] = [d for d in data["memos"] if d["id"] != memo_id]
             if len(data["memos"]) != original_count:
                 self._save_raw(data)
+                changed = True
+
+        if changed:
+            self._notify_listeners()
 
     def update_theme(self, memo_id: str, new_theme: str) -> None:
         """メモのテーマを更新する.
@@ -193,13 +244,18 @@ class MemoStore:
             memo_id: 更新するメモの UUID 文字列
             new_theme: 新しいテーマ文字列
         """
+        changed = False
         with FileLock(str(self._lock_path)):
             data = self._load_raw()
             for d in data["memos"]:
                 if d["id"] == memo_id:
                     d["theme"] = new_theme
                     self._save_raw(data)
-                    return
+                    changed = True
+                    break
+
+        if changed:
+            self._notify_listeners()
 
     def update_memo(
         self,
@@ -220,6 +276,7 @@ class MemoStore:
                 テキストファイルの絶対パス。None の場合は生データパスを更新しない
                 （既存の値を保持する）。
         """
+        changed = False
         with FileLock(str(self._lock_path)):
             data = self._load_raw()
             for d in data["memos"]:
@@ -230,7 +287,11 @@ class MemoStore:
                     if raw_transcript_file is not None:
                         d["raw_transcript_file"] = str(raw_transcript_file)
                     self._save_raw(data)
-                    return
+                    changed = True
+                    break
+
+        if changed:
+            self._notify_listeners()
 
     # ------------------------------------------------------------------
     # プライベートヘルパー
