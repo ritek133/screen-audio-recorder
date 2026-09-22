@@ -180,7 +180,27 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   main .section-label { font-size: .78rem; color: var(--accent); text-transform: uppercase;
                         letter-spacing: .05em; margin: 24px 0 4px; }
   main .summary-box { background: #f0fdfa; border-left: 3px solid var(--accent); padding: 12px 16px;
-                      border-radius: 4px; white-space: pre-wrap; }
+                      border-radius: 4px; }
+  main .summary-box > :first-child { margin-top: 0; }
+  main .summary-box > :last-child { margin-bottom: 0; }
+  main .summary-box h1, main .summary-box h2, main .summary-box h3,
+  main .summary-box h4 { margin: 14px 0 6px; line-height: 1.4; }
+  main .summary-box h1 { font-size: 1.3rem; }
+  main .summary-box h2 { font-size: 1.15rem; }
+  main .summary-box h3 { font-size: 1.02rem; }
+  main .summary-box h4 { font-size: .92rem; }
+  main .summary-box p { margin: 8px 0; }
+  main .summary-box ul, main .summary-box ol { margin: 8px 0; padding-left: 1.5em; }
+  main .summary-box li { margin: 2px 0; }
+  main .summary-box code { background: #e2f4f0; padding: 1px 5px; border-radius: 4px;
+                           font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .9em; }
+  main .summary-box pre { background: #0f2e2a; color: #e6fffb; padding: 12px 14px; border-radius: 6px;
+                          overflow-x: auto; }
+  main .summary-box pre code { background: none; padding: 0; color: inherit; }
+  main .summary-box blockquote { margin: 8px 0; padding: 4px 14px; border-left: 3px solid #99d9d0;
+                                 color: var(--muted); }
+  main .summary-box a { color: var(--accent); }
+  main .summary-box hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   main details.fulltext { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   main details.fulltext > summary { cursor: pointer; list-style: none; padding: 12px 16px; background: #f9fafb;
     font-size: .82rem; color: var(--accent); text-transform: uppercase; letter-spacing: .05em;
@@ -236,6 +256,108 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   const esc = s => (s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const title = m => (m.theme && m.theme.trim()) ? m.theme : "無題";
 
+  // Markdown の記号を落としてプレーンテキスト化する（一覧プレビュー用）。
+  const stripMd = s => (s ?? "")
+    .replace(/```[\\s\\S]*?```/g, " ")            // コードブロック
+    .replace(/`([^`]+)`/g, "$1")                   // インラインコード
+    .replace(/!\\[[^\\]]*\\]\\([^)]*\\)/g, " ")     // 画像
+    .replace(/\\[([^\\]]*)\\]\\([^)]*\\)/g, "$1")   // リンク → テキストのみ
+    .replace(/^\\s{0,3}#{1,6}\\s+/gm, "")          // 見出し
+    .replace(/^\\s{0,3}>\\s?/gm, "")               // 引用
+    .replace(/^\\s*[-*+]\\s+/gm, "")               // 箇条書き
+    .replace(/^\\s*\\d+\\.\\s+/gm, "")             // 番号付き
+    .replace(/\\*\\*([^*]+)\\*\\*/g, "$1")         // 太字
+    .replace(/\\*([^*]+)\\*/g, "$1")               // 斜体
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")                 // 打ち消し
+    .replace(/\\s+/g, " ")
+    .trim();
+
+  // 依存なしの軽量 Markdown → HTML 変換。要約表示専用の最小サブセット。
+  // 全入力はまず esc() で HTML エスケープしてから処理するため、生 HTML は通さない。
+  function renderMarkdown(src) {
+    if (!src || !src.trim()) return "";
+    // コードブロックを先に退避（中身をエスケープしてプレースホルダに置換）
+    const blocks = [];
+    let text = src.replace(/```[a-zA-Z0-9]*\\n?([\\s\\S]*?)```/g, (_, code) => {
+      blocks.push(esc(code.replace(/\\n$/, "")));
+      return "\\u0000BLOCK" + (blocks.length - 1) + "\\u0000";
+    });
+    // 残り全体をエスケープ
+    text = esc(text);
+    const lines = text.split("\\n");
+    const html = [];
+    let i = 0;
+    let para = [];
+    const flushPara = () => {
+      if (para.length) { html.push("<p>" + inline(para.join(" ")) + "</p>"); para = []; }
+    };
+    while (i < lines.length) {
+      let line = lines[i];
+      const blockMatch = line.match(/^\\u0000BLOCK(\\d+)\\u0000$/);
+      if (blockMatch) {
+        flushPara();
+        html.push("<pre><code>" + blocks[+blockMatch[1]] + "</code></pre>");
+        i++; continue;
+      }
+      if (/^\\s*$/.test(line)) { flushPara(); i++; continue; }
+      const h = line.match(/^(#{1,6})\\s+(.*)$/);
+      if (h) {
+        flushPara();
+        const lv = Math.min(h[1].length, 4);
+        html.push("<h" + lv + ">" + inline(h[2].trim()) + "</h" + lv + ">");
+        i++; continue;
+      }
+      if (/^\\s{0,3}(-{3,}|\\*{3,}|_{3,})\\s*$/.test(line)) {
+        flushPara(); html.push("<hr />"); i++; continue;
+      }
+      if (/^\\s*&gt;\\s?/.test(line)) {
+        flushPara();
+        const quote = [];
+        while (i < lines.length && /^\\s*&gt;\\s?/.test(lines[i])) {
+          quote.push(lines[i].replace(/^\\s*&gt;\\s?/, "")); i++;
+        }
+        html.push("<blockquote>" + inline(quote.join(" ")) + "</blockquote>");
+        continue;
+      }
+      if (/^\\s*[-*+]\\s+/.test(line)) {
+        flushPara();
+        const items = [];
+        while (i < lines.length && /^\\s*[-*+]\\s+/.test(lines[i])) {
+          items.push("<li>" + inline(lines[i].replace(/^\\s*[-*+]\\s+/, "")) + "</li>"); i++;
+        }
+        html.push("<ul>" + items.join("") + "</ul>");
+        continue;
+      }
+      if (/^\\s*\\d+\\.\\s+/.test(line)) {
+        flushPara();
+        const items = [];
+        while (i < lines.length && /^\\s*\\d+\\.\\s+/.test(lines[i])) {
+          items.push("<li>" + inline(lines[i].replace(/^\\s*\\d+\\.\\s+/, "")) + "</li>"); i++;
+        }
+        html.push("<ol>" + items.join("") + "</ol>");
+        continue;
+      }
+      para.push(line.trim());
+      i++;
+    }
+    flushPara();
+    return html.join("\\n");
+  }
+
+  // インライン記法（太字・斜体・打ち消し・コード・リンク）。入力はエスケープ済み。
+  function inline(s) {
+    return s
+      .replace(/`([^`]+)`/g, (_, c) => "<code>" + c + "</code>")
+      .replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>")
+      .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\\*([^*\\s][^*]*?)\\*/g, "$1<em>$2</em>")
+      .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+      .replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g,
+               '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  }
+
   function applyFilter() {
     const q = search.value.trim().toLowerCase();
     filtered = q
@@ -256,11 +378,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     const frag = document.createDocumentFragment();
     for (let i = shownCount; i < end; i++) {
       const m = filtered[i];
-      const summary = (m.summary && m.summary.trim()) ? m.summary : "(要約なし)";
+      const preview = (m.summary && m.summary.trim()) ? stripMd(m.summary) : "(要約なし)";
       const el = document.createElement("div");
       el.className = "item" + (m.id === activeId ? " active" : "");
       el.innerHTML = `<span class="date">${esc(fmtDate(m.created_at))}</span>
-                      <h3>${esc(title(m))}</h3><p>${esc(summary)}</p>`;
+                      <h3>${esc(title(m))}</h3><p>${esc(preview)}</p>`;
       el.addEventListener("click", () => select(m, el));
       frag.appendChild(el);
     }
@@ -281,14 +403,16 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     activeId = m.id;
     listEl.querySelectorAll(".item").forEach(x => x.classList.remove("active"));
     if (el) el.classList.add("active");
-    const summary = (m.summary && m.summary.trim()) ? m.summary : "(要約なし)";
+    const hasSummary = m.summary && m.summary.trim();
+    const summary = hasSummary ? m.summary : "(要約なし)";
+    const summaryHtml = hasSummary ? renderMarkdown(m.summary) : "<p>(要約なし)</p>";
     const body = (m.body && m.body.trim()) ? m.body : "(全文なし)";
     content.innerHTML = `
       <h1>${esc(title(m))}</h1>
       <div class="date">${esc(fmtDate(m.created_at))}</div>
       <div class="len">要約 ${summary.length.toLocaleString()} 字 / 全文 ${body.length.toLocaleString()} 字</div>
       <div class="section-label">要約</div>
-      <div class="summary-box">${esc(summary)}</div>
+      <div class="summary-box">${summaryHtml}</div>
       <details class="fulltext">
         <summary>全文<span class="hint">${body.length.toLocaleString()} 字 · クリックで表示</span></summary>
         <div class="body">${esc(body)}</div>
