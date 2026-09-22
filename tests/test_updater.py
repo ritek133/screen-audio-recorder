@@ -1127,6 +1127,11 @@ class TestUpdaterDownloadAndApply:
         mock_gen_script.assert_called_once()
 
         # launch_script_and_exit が呼ばれたことを確認
+        # COMPLETED 通知後、GUI 反映の猶予として実装側に短い待機があるため、
+        # launch が呼ばれるまで最大数秒ポーリングして待つ。
+        deadline = time.monotonic() + 5.0
+        while mock_launch.call_count == 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
         mock_launch.assert_called_once_with(script_path)
 
         # ステータス遷移の確認

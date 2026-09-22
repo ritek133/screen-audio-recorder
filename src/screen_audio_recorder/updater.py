@@ -462,20 +462,21 @@ class UpdateApplier:
 
     # バッチスクリプトテンプレート: 通常更新（exe 単体）
     _EXE_UPDATE_SCRIPT_TEMPLATE = r"""@echo off
-setlocal
+setlocal enabledelayedexpansion
 
 set "PID=%1"
 set "NEW_EXE=%2"
 set "TARGET_EXE=%3"
 set "BACKUP_EXE=%4"
+set "WAIT_COUNT=0"
 
 echo Waiting for process %PID% to exit...
 :wait_loop
 tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
-if %ERRORLEVEL%==0 (
+if !ERRORLEVEL!==0 (
     timeout /t 1 /nobreak >NUL
     set /a WAIT_COUNT+=1
-    if %WAIT_COUNT% GEQ {timeout} (
+    if !WAIT_COUNT! GEQ {timeout} (
         echo Timeout: process did not exit within {timeout} seconds.
         echo Restoring backup...
         move /Y "%BACKUP_EXE%" "%TARGET_EXE%"
@@ -488,7 +489,7 @@ if %ERRORLEVEL%==0 (
 echo Backing up current exe...
 del /F /Q "%BACKUP_EXE%" 2>NUL
 move /Y "%TARGET_EXE%" "%BACKUP_EXE%"
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo Failed to create backup. Aborting update and keeping current version.
     start "" "%TARGET_EXE%"
     goto :cleanup
@@ -496,7 +497,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo Moving new exe to target path...
 move /Y "%NEW_EXE%" "%TARGET_EXE%"
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo Failed to move new exe. Restoring backup...
     move /Y "%BACKUP_EXE%" "%TARGET_EXE%"
     start "" "%TARGET_EXE%"
@@ -512,21 +513,22 @@ del "%~f0"
 
     # バッチスクリプトテンプレート: フル更新（zip）
     _FULL_UPDATE_SCRIPT_TEMPLATE = r"""@echo off
-setlocal
+setlocal enabledelayedexpansion
 
 set "PID=%1"
 set "NEW_DIR=%2"
 set "TARGET_DIR=%3"
 set "BACKUP_DIR=%4"
 set "EXE_NAME=%5"
+set "WAIT_COUNT=0"
 
 echo Waiting for process %PID% to exit...
 :wait_loop
 tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
-if %ERRORLEVEL%==0 (
+if !ERRORLEVEL!==0 (
     timeout /t 1 /nobreak >NUL
     set /a WAIT_COUNT+=1
-    if %WAIT_COUNT% GEQ {timeout} (
+    if !WAIT_COUNT! GEQ {timeout} (
         echo Timeout: process did not exit within {timeout} seconds.
         echo Restoring backup...
         rmdir /S /Q "%TARGET_DIR%" 2>NUL
@@ -540,7 +542,7 @@ if %ERRORLEVEL%==0 (
 echo Backing up current files...
 rmdir /S /Q "%BACKUP_DIR%" 2>NUL
 move /Y "%TARGET_DIR%" "%BACKUP_DIR%"
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo Failed to create backup. Aborting update and keeping current version.
     start "" "%TARGET_DIR%\%EXE_NAME%"
     goto :cleanup
@@ -548,7 +550,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo Moving new files to target path...
 move /Y "%NEW_DIR%" "%TARGET_DIR%"
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo Failed to move new files. Restoring backup...
     rmdir /S /Q "%TARGET_DIR%" 2>NUL
     move /Y "%BACKUP_DIR%" "%TARGET_DIR%"
@@ -565,19 +567,20 @@ del "%~f0"
 
     # バッチスクリプトテンプレート: ロールバック（exe 単体）
     _EXE_ROLLBACK_SCRIPT_TEMPLATE = r"""@echo off
-setlocal
+setlocal enabledelayedexpansion
 
 set "PID=%1"
 set "BACKUP_EXE=%2"
 set "TARGET_EXE=%3"
+set "WAIT_COUNT=0"
 
 echo Waiting for process %PID% to exit...
 :wait_loop
 tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
-if %ERRORLEVEL%==0 (
+if !ERRORLEVEL!==0 (
     timeout /t 1 /nobreak >NUL
     set /a WAIT_COUNT+=1
-    if %WAIT_COUNT% GEQ {timeout} (
+    if !WAIT_COUNT! GEQ {timeout} (
         echo Timeout: process did not exit within {timeout} seconds.
         echo Rollback failed: process did not exit. > "%~dp0rollback_error.log"
         goto :cleanup
@@ -588,7 +591,7 @@ if %ERRORLEVEL%==0 (
 echo Restoring backup...
 del /F /Q "%TARGET_EXE%" 2>NUL
 move /Y "%BACKUP_EXE%" "%TARGET_EXE%"
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo Failed to restore backup. > "%~dp0rollback_error.log"
     goto :cleanup
 )
@@ -602,20 +605,21 @@ del "%~f0"
 
     # バッチスクリプトテンプレート: ロールバック（フル更新）
     _FULL_ROLLBACK_SCRIPT_TEMPLATE = r"""@echo off
-setlocal
+setlocal enabledelayedexpansion
 
 set "PID=%1"
 set "BACKUP_DIR=%2"
 set "TARGET_DIR=%3"
 set "EXE_NAME=%4"
+set "WAIT_COUNT=0"
 
 echo Waiting for process %PID% to exit...
 :wait_loop
 tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
-if %ERRORLEVEL%==0 (
+if !ERRORLEVEL!==0 (
     timeout /t 1 /nobreak >NUL
     set /a WAIT_COUNT+=1
-    if %WAIT_COUNT% GEQ {timeout} (
+    if !WAIT_COUNT! GEQ {timeout} (
         echo Timeout: process did not exit within {timeout} seconds.
         echo Rollback failed: process did not exit. > "%~dp0rollback_error.log"
         goto :cleanup
@@ -626,7 +630,7 @@ if %ERRORLEVEL%==0 (
 echo Restoring backup...
 rmdir /S /Q "%TARGET_DIR%" 2>NUL
 move /Y "%BACKUP_DIR%" "%TARGET_DIR%"
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo Failed to restore backup. > "%~dp0rollback_error.log"
     goto :cleanup
 )
@@ -851,7 +855,16 @@ del "%~f0"
             stderr=subprocess.DEVNULL,
         )
 
-        sys.exit(0)
+        # プロセスを確実に終了させる。
+        # sys.exit(0) は SystemExit 例外を送出するだけで、tkinter の mainloop や
+        # 録画/キャプチャ系の非デーモンスレッドが動作していると即座には終了せず、
+        # 更新バッチが「プロセス終了待ち」ループから抜けられなくなる。
+        # そのため各種バッファをフラッシュした上で os._exit() により
+        # インタプリタを即時終了する。
+        logging.shutdown()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
     def find_backup(self) -> BackupInfo | None:
         """同一ディレクトリにバックアップが存在するか確認する.
@@ -1289,6 +1302,11 @@ class Updater:
             message="更新が完了しました。アプリを再起動します。",
             version=str(release_info.version),
         ))
+
+        # COMPLETED 通知が GUI スレッド（Tk after 経由）で処理され、進捗ダイアログの
+        # クローズ等が反映される猶予を与える。この直後に os._exit() でプロセスを
+        # 終了するため、猶予を挟まないと UI 更新が反映されないまま画面が固まる。
+        time.sleep(0.5)
 
         # スクリプト起動 & 終了
         logger.info(
