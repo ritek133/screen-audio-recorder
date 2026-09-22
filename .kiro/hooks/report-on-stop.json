@@ -1,0 +1,24 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "完了時に作業サマリを収集",
+      "trigger": "Stop",
+      "description": "エージェント完了時に、現在のブランチ・未コミット変更・最新コミット・リモート同期状態を集約して出力する（事実収集）。",
+      "action": {
+        "type": "command",
+        "command": "powershell -NoProfile -Command \"$b=(git branch --show-current 2>$null); if(-not $b){exit 0}; Write-Output '=== 作業サマリ（Stopフック） ==='; Write-Output ('ブランチ: ' + $b); Write-Output '--- 未コミット変更 ---'; $s=(git status --porcelain 2>$null); if($s){Write-Output $s}else{Write-Output '(なし: working tree clean)'}; Write-Output '--- 最新コミット ---'; git log --oneline -1 2>$null; Write-Output '--- リモート同期状態 ---'; git status -sb 2>$null | Select-Object -First 1\"",
+        "timeout": 30
+      }
+    },
+    {
+      "name": "完了報告と未完了時の継続を促す",
+      "trigger": "Stop",
+      "description": "作業サマリの報告・タスク完了判定・未完了なら継続を促す（指示）。",
+      "action": {
+        "type": "agent",
+        "prompt": "停止する前に、次を日本語で必ず行うこと。\n\n1. 作業サマリの報告: 直前のStopフックが出力したgit情報（ブランチ・未コミット変更・最新コミット・リモート同期状態）を踏まえ、今回の作業でやったことと、コミット/push/PRの完了状況を簡潔にまとめて報告する。\n\n2. タスク完了判定: ユーザーが依頼したタスクが完了しているかを明示的に述べる。判断材料（未コミット変更の有無、テスト・ビルドの結果、PR作成の有無など）に触れる。完了なら『完了』、未完了なら『未完了』と明言する。\n\n3. 未完了時の継続: タスクが未完了で、かつ継続に必要な情報が揃っている場合は、勝手に終了せず作業を継続すること。ただし次のいずれかに該当する場合は継続せず、ユーザーの判断を待つこと:\n   - ユーザーの承認・確認を待っている（例: 破壊的操作やタグpush等の実行可否）\n   - 追加の情報や意思決定がユーザーから必要\n   - ユーザーが明示的に停止・中断を指示した\n\n過度な自動継続は避け、確認が必要な場面では必ず立ち止まること。"
+      }
+    }
+  ]
+}
