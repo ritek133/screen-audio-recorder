@@ -9,7 +9,8 @@
         "type": "command",
         "command": "powershell -NoProfile -Command \"$b=(git branch --show-current 2>$null); if(-not $b){exit 0}; Write-Output '=== 作業サマリ（Stopフック） ==='; Write-Output ('ブランチ: ' + $b); Write-Output '--- 未コミット変更 ---'; $s=(git status --porcelain 2>$null); if($s){Write-Output $s}else{Write-Output '(なし: working tree clean)'}; Write-Output '--- 最新コミット ---'; git log --oneline -1 2>$null; Write-Output '--- リモート同期状態 ---'; git status -sb 2>$null | Select-Object -First 1\"",
         "timeout": 30
-      }
+      },
+      "enabled": true
     },
     {
       "name": "完了報告と未完了時の継続を促す",
