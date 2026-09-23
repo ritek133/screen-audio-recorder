@@ -52,6 +52,9 @@
   `_SERVER_START_TIMEOUT = 120` 秒を上限に 1 秒間隔でヘルスチェックをポーリングし続ける。
   この間 `root.mainloop()` に到達できず、**ウィンドウが表示されない／固まる**。
 - Whisper モデルロードは非同期化済みなのに、LLM 初期化だけが同期のままである点が非対称。
+- なお `_init_local()` は `backend == LOCAL` のときだけ呼ばれるため、**AWS_BEDROCK / API 構成では
+  llama-server は起動しない**（分岐は正しく機能している）。問題は LOCAL 構成でのブロッキングと、
+  バックエンドを問わず走る重いライブラリの import（下記）にある。
 
 #### 🟠 高優先：重いライブラリのトップレベル import
 
@@ -63,6 +66,9 @@
 - `main.py` はコンポーネントを関数内 import して遅延化を試みているが、**各モジュールが
   トップレベルで重いライブラリを import している**ため効果が相殺されている。特に `boto3` は
   AWS 未使用時、`faster-whisper` はモデルロード前でも import コストが発生する。
+- **バックエンドと無関係にロードされる**点が本質的な無駄：AWS/API 構成でも `faster-whisper`
+  （CTranslate2）が、LOCAL 構成でも `boto3` が import される。選択中のバックエンドが使わない
+  ライブラリはそもそもロードしないのが理想。
 
 #### 🟠 高優先：マイクデバイス列挙が同期実行
 
@@ -84,9 +90,42 @@
 ## 決定
 
 起動を高速化するため、以下を**影響度の高い順**に段階的に実装する。方針は
-「GUI を最優先で即表示し、重い処理は準備完了まで非同期に回す」こと。
+「**選択中のバックエンドが必要としないローカルリソースは起動・ロードしない**」ことと、
+「GUI を最優先で即表示し、必要な重い処理は準備完了まで非同期に回す」こと。
 
-1. **【最優先】llama-server の起動・待機をバックグラウンド化する。**
+### 前提：バックエンドと必要リソースの対応
+
+文字起こし（Transcriber）と要約（LlmClient）はそれぞれ独立した「バックエンド」設定を持つ。
+バックエンドごとに必要なローカルリソースは次の通り。
+
+| 用途 | バックエンド | ローカルで必要なリソース | 不要になるもの |
+|------|------------|------------------------|--------------|
+| 文字起こし | LOCAL | Whisper モデル（faster-whisper/CTranslate2） | — |
+| 文字起こし | VLLM | なし（外部 API） | Whisper モデル、faster-whisper |
+| 文字起こし | AWS_TRANSCRIBE | なし（boto3 は API 呼び出しのみ） | Whisper モデル、faster-whisper |
+| 要約 | LOCAL | llama-server プロセス | — |
+| 要約 | API | なし（外部エンドポイント） | llama-server |
+| 要約 | AWS_BEDROCK | なし（boto3 は API 呼び出しのみ） | llama-server、faster-whisper |
+
+**すなわち、AWS（Transcribe / Bedrock）や外部 API を使う構成では、llama-server の起動も
+Whisper モデルのロードも一切不要**である。これらを構成に応じて起動しないようにすれば、
+起動時間・メモリともにさらに軽くなる。
+
+### 決定事項
+
+0. **【最優先・方針】バックエンド設定に応じて、不要なローカルリソースを起動・ロードしない。**
+   - **分岐ロジック自体は既に存在する**：`LlmClient._init_local()`（llama-server 起動）は
+     `backend == LOCAL` のときだけ呼ばれ、AWS_BEDROCK / API では起動しない。
+     `Transcriber` も `backend == LOCAL` のときだけ `_init_local()` を呼ぶ。この設計は維持する。
+   - ただし現状、**`main.py` の `transcriber.load_model_async()` はバックエンドを見ずに呼ばれ**、
+     内部の `if self._enabled:` 早期リターン（AWS/vLLM は `_enabled=True` になる）に依存して
+     暗黙的にロードを回避している。これを **`backend == LOCAL` の明示的ガード**に置き換え、
+     意図を明確にし堅牢化する（AWS/API 構成で Whisper ロード経路に入らないことを保証）。
+   - **重いライブラリの import をバックエンドに応じて遅延化する**（下記 2 と一体で実施）。
+     LOCAL 文字起こしでない限り `faster_whisper`/CTranslate2 を、LOCAL/AWS 要約でない限り
+     不要な依存を import しない。これが「さらに軽くする」ための中核。
+
+1. **【最優先】llama-server の起動・待機をバックグラウンド化する（LOCAL 要約時のみ）。**
    - `LlmClient` に非同期初期化パス（例：`initialize_async(callback, root)`）を設け、
      Whisper と同じパターン（daemon スレッド ＋ `root.after`/`after_idle` で GUI 通知）を適用する。
    - `main.py` は `LlmClient` を「未初期化」状態で構築し、mainloop 開始後にバックグラウンドで
@@ -95,10 +134,11 @@
    - 既存の同期 `_init_local()` / `_wait_for_server()` はロジックを再利用しつつ、
      呼び出し元をスレッド内に移す。
 
-2. **【高優先】重いライブラリを遅延 import に切り替える。**
+2. **【高優先】重いライブラリをバックエンドに応じて遅延 import に切り替える。**
    - `boto3` / `botocore` を、実際に AWS バックエンドを使う関数内へ**遅延 import** 化する
-     （`transcriber.py`, `aws_utils.py`, `llm_client.py`）。
-   - `faster-whisper`（および間接的な CTranslate2）と `dxcam` も、使用直前の遅延 import を検討する。
+     （`transcriber.py`, `aws_utils.py`, `llm_client.py`）。LOCAL/API 構成では boto3 をロードしない。
+   - `faster-whisper`（および間接的な CTranslate2）を、**文字起こしが LOCAL のときだけ** import する。
+     AWS_TRANSCRIBE / vLLM 構成では faster-whisper をロードしない。`dxcam` も使用直前の遅延 import を検討する。
      ※ import 化にあたり PyInstaller の `hiddenimports` を維持し、ビルド後に実ロードできることを確認する。
 
 3. **【高優先】マイクデバイス列挙を非同期化する。**
@@ -115,10 +155,13 @@
 
 ### 検証方法
 
-- 改善前後で、以下 2 シナリオの起動時間（プロセス開始〜ウィンドウ表示 / 〜操作可能）を計測する。
-  - (A) LLM ローカルバックエンド未設定
-  - (B) LLM ローカルバックエンド設定済み（llama-server 起動あり）
-- 特に (B) で、ウィンドウ表示が llama-server 起動待ちにブロックされないことを確認する。
+- 改善前後で、以下シナリオの起動時間（プロセス開始〜ウィンドウ表示 / 〜操作可能）を計測する。
+  - (A) 文字起こし=LOCAL / 要約=LOCAL（llama-server + Whisper 両方あり）
+  - (B) 文字起こし=AWS_TRANSCRIBE / 要約=AWS_BEDROCK（**ローカルリソースなし＝最軽量を期待**）
+  - (C) 外部 API 構成（vLLM / API）
+- (A) で、ウィンドウ表示が llama-server 起動待ちにブロックされないことを確認する。
+- (B)(C) で、**llama-server が起動されず、Whisper モデルおよび faster-whisper がロードされない**
+  ことを確認する（プロセス一覧・ログ・メモリ使用量で検証）。
 - 既存のテスト（`tests/`）が緑であること。非同期化により競合や未初期化アクセスが
   発生しないことを確認する。
 
