@@ -172,6 +172,16 @@ class Transcriber:
         """文字起こし機能が有効かどうかを返す."""
         return self._enabled
 
+    @property
+    def backend(self) -> TranscriberBackend:
+        """現在の文字起こしバックエンドを返す.
+
+        呼び出し側が「ローカル（faster-whisper）以外では Whisper モデルの
+        ロードを行わない」ことを明示的に判定するために公開する
+        （ADR-005 決定事項 0）。
+        """
+        return self._transcriber_settings.backend
+
     def _load_model(self) -> None:
         """Whisper モデルを同期的にロードする."""
         try:
