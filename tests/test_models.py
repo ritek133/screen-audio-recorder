@@ -249,10 +249,10 @@ class TestUsageInfo:
     def test_default_all_none(self) -> None:
         """デフォルトでは全フィールドが None である."""
         usage = UsageInfo()
-        assert usage.monthly_token_limit is None
+        assert usage.daily_token_limit is None
         assert usage.used_tokens is None
         assert usage.remaining_tokens is None
-        assert usage.monthly_transcribe_job_limit is None
+        assert usage.daily_transcribe_job_limit is None
         assert usage.used_transcribe_jobs is None
         assert usage.remaining_transcribe_jobs is None
         assert usage.period_start is None
@@ -263,19 +263,19 @@ class TestUsageInfo:
     def test_construct_with_values(self) -> None:
         """全フィールドを指定して生成できる."""
         usage = UsageInfo(
-            monthly_token_limit=500000,
+            daily_token_limit=500000,
             used_tokens=1000,
             remaining_tokens=499000,
-            monthly_transcribe_job_limit=10,
+            daily_transcribe_job_limit=10,
             used_transcribe_jobs=2,
             remaining_transcribe_jobs=8,
-            period_start="2026-09-01T00:00:00+00:00",
-            reset_at="2026-10-01T00:00:00+00:00",
+            period_start="2026-09-24T00:00:00+00:00",
+            reset_at="2026-09-25T00:00:00+00:00",
             retrieved_at="2026-09-24T10:00:00+00:00",
         )
         assert usage.remaining_tokens == 499000
         assert usage.remaining_transcribe_jobs == 8
-        assert usage.reset_at == "2026-10-01T00:00:00+00:00"
+        assert usage.reset_at == "2026-09-25T00:00:00+00:00"
         assert usage.error is None
 
     def test_error_field(self) -> None:

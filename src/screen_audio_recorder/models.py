@@ -201,7 +201,7 @@ class AwsSettings:
     session_token: str = ""
     # 使用量集約 API（ADR-006 案B）のエンドポイント URL。
     # 例: https://<RestApiId>.execute-api.<region>.amazonaws.com/prod/usage
-    # 上限値（月トークン上限等）はサーバー側（Lambda 環境変数）に閉じるため、
+    # 上限値（日次トークン上限等）はサーバー側（Lambda 環境変数）に閉じるため、
     # アプリ側には保存しない。アプリはこの URL を SigV4 署名付き GET で呼び、
     # Lambda が返した残量・上限・使用量をそのまま表示するだけとする。
     usage_api_endpoint: str = ""
@@ -216,26 +216,26 @@ class UsageInfo:
     アプリは受け取った値を表示するだけでよい。
 
     Transcribe が無効なユーザーの場合、文字起こし関連フィールド
-    （monthly_transcribe_job_limit / used_transcribe_jobs /
+    （daily_transcribe_job_limit / used_transcribe_jobs /
     remaining_transcribe_jobs）は None になる。
 
     Attributes:
-        monthly_token_limit: 月トークン上限。取得失敗時は None。
-        used_tokens: 当月使用トークン数。取得失敗時は None。
+        daily_token_limit: 日次トークン上限。取得失敗時は None。
+        used_tokens: 当日使用トークン数。取得失敗時は None。
         remaining_tokens: 残トークン数。取得失敗時は None。
-        monthly_transcribe_job_limit: 月文字起こし上限。無効時・失敗時は None。
-        used_transcribe_jobs: 当月使用文字起こし回数。無効時・失敗時は None。
+        daily_transcribe_job_limit: 日次文字起こし上限。無効時・失敗時は None。
+        used_transcribe_jobs: 当日使用文字起こし回数。無効時・失敗時は None。
         remaining_transcribe_jobs: 残文字起こし回数。無効時・失敗時は None。
         period_start: 集計期間の開始日時（ISO8601 UTC 文字列）。失敗時は None。
-        reset_at: リセット日時（翌月 1 日 00:00 UTC、ISO8601 文字列）。失敗時は None。
+        reset_at: リセット日時（翌日 00:00 UTC、ISO8601 文字列）。失敗時は None。
         retrieved_at: サーバー側での取得時刻（ISO8601 UTC 文字列）。失敗時は None。
         error: 取得に失敗した場合のエラーメッセージ。成功時は None。
     """
 
-    monthly_token_limit: int | None = None
+    daily_token_limit: int | None = None
     used_tokens: int | None = None
     remaining_tokens: int | None = None
-    monthly_transcribe_job_limit: int | None = None
+    daily_transcribe_job_limit: int | None = None
     used_transcribe_jobs: int | None = None
     remaining_transcribe_jobs: int | None = None
     period_start: str | None = None

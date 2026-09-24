@@ -64,18 +64,18 @@ class TestApplyUsage:
         """正常な UsageInfo で残量・上限・リセットが表示される."""
         win = _make_window_stub()
         usage = UsageInfo(
-            monthly_token_limit=500000,
+            daily_token_limit=500000,
             remaining_tokens=498500,
-            monthly_transcribe_job_limit=10,
+            daily_transcribe_job_limit=10,
             remaining_transcribe_jobs=7,
-            reset_at="2026-10-01T00:00:00+00:00",
+            reset_at="2026-09-25T00:00:00+00:00",
         )
         win._apply_usage(usage)
 
         assert "498500" in win._usage_tokens_var.get()
         assert "500000" in win._usage_tokens_var.get()
         assert "7" in win._usage_jobs_var.get()
-        assert "2026-10-01" in win._usage_reset_var.get()
+        assert "2026-09-25" in win._usage_reset_var.get()
 
     def test_error_shows_fallback(self) -> None:
         """error 付き UsageInfo は『取得できませんでした』表示になる."""
@@ -89,7 +89,7 @@ class TestApplyUsage:
         """Transcribe 無効ユーザーは残文字起こしが『対象外』になる."""
         win = _make_window_stub()
         usage = UsageInfo(
-            monthly_token_limit=500000,
+            daily_token_limit=500000,
             remaining_tokens=100,
             remaining_transcribe_jobs=None,
         )
@@ -124,10 +124,10 @@ class TestRefreshUsage:
         win = _make_window_stub(aws_settings=aws_settings)
 
         usage = UsageInfo(
-            monthly_token_limit=500000,
+            daily_token_limit=500000,
             remaining_tokens=498500,
             remaining_transcribe_jobs=None,
-            reset_at="2026-10-01T00:00:00+00:00",
+            reset_at="2026-09-25T00:00:00+00:00",
         )
         mocker.patch(
             "screen_audio_recorder.usage_client.fetch_usage", return_value=usage

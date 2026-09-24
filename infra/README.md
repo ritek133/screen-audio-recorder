@@ -35,18 +35,18 @@ infra/
 返す使用量集約 API が含まれる。
 
 - **構成**: API Gateway（REST API, `AWS_IAM` 認可）→ Lambda（`python3.12`）。
-- **集計**: Lambda が `cloudwatch:GetMetricData` で「当月 1 日 00:00 UTC 〜 現在」の
+- **集計**: Lambda が `cloudwatch:GetMetricData` で「当日 00:00 UTC 〜 現在」の
   Bedrock 入力トークン数（`AWS/Bedrock` `InputTokenCount`）と Transcribe ジョブ数
   （`{ProjectName}/TranscribeUsage` の `{UserName}-TranscribeJobCount`）を Sum 集計する。
-- **残量計算**: 上限（`MonthlyTokenLimit` / `MonthlyTranscribeJobLimit`）との差分を
+- **残量計算**: 上限（`DailyTokenLimit` / `DailyTranscribeJobLimit`）との差分を
   サーバー側（Lambda 環境変数 = CloudFormation パラメータ由来）で算出する。
   **上限値そのものはアプリへ配布・保存しない。**
 - **認証**: API Gateway は IAM 認可（SigV4 署名）。アプリ IAM ユーザーには
   当該 API の `prod/GET/usage` に限定した `execute-api:Invoke` を付与する。
-- **集計期間の統一**: Bedrock・Transcribe とも「月次（暦月）」で評価する。
+- **集計期間の統一**: Bedrock・Transcribe とも「日次」で評価する。
   使用量ガードのアラーム（`BedrockInvocationAlarm` / `TranscribeJobAlarm`）は
-  評価窓を 30 日相当（`Period: 2592000`）とした近似的な安全弁であり、
-  残量表示に用いる厳密な暦月累計は集約 Lambda が算出する。
+  評価窓を 1 日（`Period: 86400`）とした安全弁であり、
+  残量表示に用いる厳密な当日累計（当日 00:00 UTC 起点）は集約 Lambda が算出する。
 
 ## デプロイ手順
 
@@ -95,14 +95,14 @@ aws cloudformation deploy \
     ProjectName=screen-recorder \
     UserName=user01 \
     TranscribeBucketName=screen-recorder-transcribe-<アカウントID> \
-    MonthlyTokenLimit=500000 \
-    MonthlyTranscribeJobLimit=10 \
+    DailyTokenLimit=500000 \
+    DailyTranscribeJobLimit=10 \
     BedrockModelArn=arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0
 ```
 
-> **上限パラメータ**: Transcribe の上限パラメータは月次に統一され、名称が
-> `DailyTranscribeJobLimit` から **`MonthlyTranscribeJobLimit`**（デフォルト 10）に変更された。
-> Bedrock トークン上限は `MonthlyTokenLimit`（デフォルト 500000）。上限を変更する場合は
+> **上限パラメータ**: Bedrock・Transcribe とも日次上限に統一されている。
+> Bedrock トークン上限は **`DailyTokenLimit`**（デフォルト 500000）、
+> Transcribe ジョブ上限は **`DailyTranscribeJobLimit`**（デフォルト 10）。上限を変更する場合は
 > パラメータを指定してスタックを再デプロイする（DynamoDB / SSM による動的管理は行わない）。
 >
 > **CAPABILITY**: 使用量集約 API 用の IAM ロール・名前付き IAM リソースを含むため、

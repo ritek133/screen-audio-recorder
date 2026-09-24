@@ -115,10 +115,10 @@ def _map_response(data: dict) -> UsageInfo:
         マッピング済みの :class:`UsageInfo`。
     """
     return UsageInfo(
-        monthly_token_limit=data.get("monthly_token_limit"),
+        daily_token_limit=data.get("daily_token_limit"),
         used_tokens=data.get("used_tokens"),
         remaining_tokens=data.get("remaining_tokens"),
-        monthly_transcribe_job_limit=data.get("monthly_transcribe_job_limit"),
+        daily_transcribe_job_limit=data.get("daily_transcribe_job_limit"),
         used_transcribe_jobs=data.get("used_transcribe_jobs"),
         remaining_transcribe_jobs=data.get("remaining_transcribe_jobs"),
         period_start=data.get("period_start"),

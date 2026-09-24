@@ -337,14 +337,14 @@ class MainWindow:
 
         if usage.remaining_tokens is not None:
             self._usage_tokens_var.set(
-                f"残トークン: {usage.remaining_tokens} / 月上限 {usage.monthly_token_limit}"
+                f"残トークン: {usage.remaining_tokens} / 日次上限 {usage.daily_token_limit}"
             )
         else:
             self._usage_tokens_var.set("残トークン: -")
 
         if usage.remaining_transcribe_jobs is not None:
             self._usage_jobs_var.set(
-                f"残文字起こし: {usage.remaining_transcribe_jobs} / 月上限 {usage.monthly_transcribe_job_limit}"
+                f"残文字起こし: {usage.remaining_transcribe_jobs} / 日次上限 {usage.daily_transcribe_job_limit}"
             )
         else:
             # Transcribe 無効ユーザーは対象外。

@@ -50,15 +50,15 @@ Parameters:
       - "false"
     Description: Whether to enable the usage guard (disables the key when a limit is exceeded)
 
-  MonthlyTokenLimit:
+  DailyTokenLimit:
     Type: Number
     Default: 500000
-    Description: Monthly token limit. Access key is auto-disabled when exceeded.
+    Description: Daily token limit. Access key is auto-disabled when exceeded.
 
-  MonthlyTranscribeJobLimit:
+  DailyTranscribeJobLimit:
     Type: Number
     Default: 10
-    Description: Monthly Transcribe job limit. Access key is auto-disabled when exceeded.
+    Description: Daily Transcribe job limit. Access key is auto-disabled when exceeded.
 
 Conditions:
   ShouldCreateAccessKey: !Equals [!Ref CreateAccessKey, "true"]
@@ -330,27 +330,25 @@ Resources:
       Principal: sns.amazonaws.com
       SourceArn: !Ref UsageGuardTopic
 
-  # CloudWatch Alarm — Bedrock トークン使用量（月次評価窓）
-  # 注: Period を 2592000 秒（30 日相当）とし、月次上限の近似的な安全弁とする。
-  #     CloudWatch Alarm 単体では暦月（1 日 00:00 UTC 起点）を厳密に表現できないため、
-  #     これはあくまでアクセスキー自動無効化のための近似判定である。
-  #     残量表示に用いる厳密な暦月累計は、使用量集約 Lambda (UsageAggregatorFunction) が
-  #     GetMetricData の StartTime を「当月 1 日 00:00 UTC」に指定して算出する。
+  # CloudWatch Alarm — Bedrock トークン使用量（日次評価窓）
+  # 注: Period を 86400 秒（1 日）とし、日次上限の安全弁とする。
+  #     残量表示に用いる厳密な当日累計は、使用量集約 Lambda (UsageAggregatorFunction) が
+  #     GetMetricData の StartTime を「当日 00:00 UTC」に指定して算出する。
   BedrockInvocationAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: ShouldEnableUsageGuard
     Properties:
       AlarmName: !Sub "${ProjectName}-${UserName}-token-limit"
-      AlarmDescription: !Sub "${UserName} の Bedrock トークン使用量が月次上限を超過"
+      AlarmDescription: !Sub "${UserName} の Bedrock トークン使用量が日次上限を超過"
       Namespace: AWS/Bedrock
       MetricName: InputTokenCount
       Dimensions:
         - Name: InferenceProfileArn
           Value: !GetAtt InferenceProfile.InferenceProfileArn
       Statistic: Sum
-      Period: 2592000
+      Period: 86400
       EvaluationPeriods: 1
-      Threshold: !Ref MonthlyTokenLimit
+      Threshold: !Ref DailyTokenLimit
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
@@ -447,24 +445,22 @@ Resources:
           MetricValue: "1"
           DefaultValue: 0
 
-  # CloudWatch Alarm — 月次あたりの Transcribe ジョブ数（月次評価窓）
-  # 注: Period を 2592000 秒（30 日相当）とし、月次上限の近似的な安全弁とする。
-  #     CloudWatch Alarm 単体では暦月境界を厳密に表現できないため、
-  #     これはアクセスキー自動無効化のための近似判定である。
-  #     残量表示に用いる厳密な暦月累計は、使用量集約 Lambda (UsageAggregatorFunction) が
-  #     GetMetricData の StartTime を「当月 1 日 00:00 UTC」に指定して算出する。
+  # CloudWatch Alarm — 日次あたりの Transcribe ジョブ数（日次評価窓）
+  # 注: Period を 86400 秒（1 日）とし、日次上限の安全弁とする。
+  #     残量表示に用いる厳密な当日累計は、使用量集約 Lambda (UsageAggregatorFunction) が
+  #     GetMetricData の StartTime を「当日 00:00 UTC」に指定して算出する。
   TranscribeJobAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: ShouldEnableTranscribeGuard
     Properties:
       AlarmName: !Sub "${ProjectName}-${UserName}-transcribe-job-limit"
-      AlarmDescription: !Sub "${UserName} の Transcribe ジョブ数が月次上限 (${MonthlyTranscribeJobLimit}) を超過"
+      AlarmDescription: !Sub "${UserName} の Transcribe ジョブ数が日次上限 (${DailyTranscribeJobLimit}) を超過"
       Namespace: !Sub "${ProjectName}/TranscribeUsage"
       MetricName: !Sub "${UserName}-TranscribeJobCount"
       Statistic: Sum
-      Period: 2592000
+      Period: 86400
       EvaluationPeriods: 1
-      Threshold: !Ref MonthlyTranscribeJobLimit
+      Threshold: !Ref DailyTranscribeJobLimit
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
@@ -477,7 +473,7 @@ Resources:
 
   # ============================================================
   # 使用量集約 API（案B: 集約 API 方式）
-  # API Gateway (AWS_IAM 認可) → Lambda が CloudWatch から当月使用量を集計し、
+  # API Gateway (AWS_IAM 認可) → Lambda が CloudWatch から当日使用量を集計し、
   # 上限との差分（残量）を JSON で返す。
   # 上限値はアプリに配布せず、Lambda 環境変数（CloudFormation パラメータ由来）に閉じる。
   # 使用量ガード (ShouldEnableUsageGuard) とは独立に常時提供する。
@@ -525,8 +521,8 @@ Resources:
       Role: !GetAtt UsageAggregatorRole.Arn
       Environment:
         Variables:
-          MONTHLY_TOKEN_LIMIT: !Ref MonthlyTokenLimit
-          MONTHLY_TRANSCRIBE_JOB_LIMIT: !Ref MonthlyTranscribeJobLimit
+          DAILY_TOKEN_LIMIT: !Ref DailyTokenLimit
+          DAILY_TRANSCRIBE_JOB_LIMIT: !Ref DailyTranscribeJobLimit
           INFERENCE_PROFILE_ARN: !GetAtt InferenceProfile.InferenceProfileArn
           METRIC_NAMESPACE: !Sub "${ProjectName}/TranscribeUsage"
           TRANSCRIBE_METRIC_NAME: !Sub "${UserName}-TranscribeJobCount"
@@ -534,14 +530,14 @@ Resources:
       Code:
         ZipFile: |
           # 使用量集約 Lambda。
-          # 当月 1 日 00:00 UTC 〜 現在の Bedrock 入力トークン数と Transcribe ジョブ数を
+          # 当日 00:00 UTC 〜 現在の Bedrock 入力トークン数と Transcribe ジョブ数を
           # CloudWatch GetMetricData で Sum 集計し、上限との差分（残量）を返す。
           # 注意: 環境変数の一括ダンプ（os.environ / printenv 全出力）は行わない。
           #       ログには使用量・残量の要約のみを出力する。
           import json
           import logging
           import os
-          from datetime import datetime, timezone
+          from datetime import datetime, timedelta, timezone
 
           import boto3
 
@@ -550,26 +546,18 @@ Resources:
           cloudwatch = boto3.client("cloudwatch")
 
 
-          def _month_start(now):
-              # 当月 1 日 00:00 UTC
-              return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+          def _day_start(now):
+              # 当日 00:00 UTC
+              return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-          def _next_month_start(now):
-              # 翌月 1 日 00:00 UTC（リセット日時）
-              if now.month == 12:
-                  return now.replace(
-                      year=now.year + 1, month=1, day=1,
-                      hour=0, minute=0, second=0, microsecond=0,
-                  )
-              return now.replace(
-                  month=now.month + 1, day=1,
-                  hour=0, minute=0, second=0, microsecond=0,
-              )
+          def _next_day_start(now):
+              # 翌日 00:00 UTC（リセット日時）
+              return _day_start(now) + timedelta(days=1)
 
 
           def _sum_metric(namespace, metric_name, dimensions, start, end):
-              # 指定メトリクスを当月区間で Sum 集計する。
+              # 指定メトリクスを当日区間で Sum 集計する。
               resp = cloudwatch.get_metric_data(
                   MetricDataQueries=[
                       {
@@ -581,7 +569,7 @@ Resources:
                                   "Dimensions": dimensions,
                               },
                               # 期間全体を 1 データポイントに集約する。
-                              "Period": 2592000,
+                              "Period": 86400,
                               "Stat": "Sum",
                           },
                           "ReturnData": True,
@@ -597,13 +585,13 @@ Resources:
 
           def handler(event, context):
               now = datetime.now(timezone.utc)
-              start = _month_start(now)
-              reset_at = _next_month_start(now)
+              start = _day_start(now)
+              reset_at = _next_day_start(now)
 
-              token_limit = int(os.environ["MONTHLY_TOKEN_LIMIT"])
+              token_limit = int(os.environ["DAILY_TOKEN_LIMIT"])
               inference_profile_arn = os.environ["INFERENCE_PROFILE_ARN"]
 
-              # Bedrock 入力トークン使用量（当月累計）
+              # Bedrock 入力トークン使用量（当日累計）
               used_tokens = int(
                   _sum_metric(
                       "AWS/Bedrock",
@@ -618,7 +606,7 @@ Resources:
               # Transcribe ジョブ数（有効時のみ。無効時は各項目 null）
               enable_transcribe = os.environ.get("ENABLE_TRANSCRIBE", "false") == "true"
               if enable_transcribe:
-                  job_limit = int(os.environ["MONTHLY_TRANSCRIBE_JOB_LIMIT"])
+                  job_limit = int(os.environ["DAILY_TRANSCRIBE_JOB_LIMIT"])
                   used_jobs = int(
                       _sum_metric(
                           os.environ["METRIC_NAMESPACE"],
@@ -635,10 +623,10 @@ Resources:
                   remaining_jobs = None
 
               body = {
-                  "monthly_token_limit": token_limit,
+                  "daily_token_limit": token_limit,
                   "used_tokens": used_tokens,
                   "remaining_tokens": remaining_tokens,
-                  "monthly_transcribe_job_limit": job_limit,
+                  "daily_transcribe_job_limit": job_limit,
                   "used_transcribe_jobs": used_jobs,
                   "remaining_transcribe_jobs": remaining_jobs,
                   "period_start": start.isoformat(),
@@ -782,9 +770,9 @@ Outputs:
       [Usage API]
         - Endpoint: https://${UsageApi}.execute-api.${AWS::Region}.amazonaws.com/prod/usage
         - Auth: IAM (SigV4)
-        - Bedrock monthly token limit: ${MonthlyTokenLimit}
-        - Transcribe monthly job limit: ${MonthlyTranscribeJobLimit}
+        - Bedrock daily token limit: ${DailyTokenLimit}
+        - Transcribe daily job limit: ${DailyTranscribeJobLimit}
       [Usage guard]
-        - Bedrock monthly token limit: ${MonthlyTokenLimit}
-        - Transcribe monthly job limit: ${MonthlyTranscribeJobLimit}
+        - Bedrock daily token limit: ${DailyTokenLimit}
+        - Transcribe daily job limit: ${DailyTranscribeJobLimit}
         - On breach: access key auto-disabled

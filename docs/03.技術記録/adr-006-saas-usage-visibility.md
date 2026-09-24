@@ -204,3 +204,27 @@ API Gateway（IAM 認証 / SigV4）＋ Lambda を新設する。Lambda は Cloud
   PR 経由で行うこと（本タスクでは CI 設定変更は想定しない）。
 - サンドボックスは Linux（Python 3.9）で Windows 専用依存（dxcam / PyAudioWPatch）が入らないため、
   実アプリ起動ではなく、Windows 依存を import しないユニットテストで検証する。
+
+## 追記（2026-09-24）: 集計期間を日次に変更
+
+当初は「決定 1」で集計期間を月次（暦月）に統一すると決定したが、ユーザー判断により
+**Bedrock トークン・Transcribe ジョブ数のいずれも日次集計に統一する方針へ変更**した
+（選択肢 C）。残量表示・使用量ガードともに「**当日 00:00 UTC から現在まで**」の累計で評価し、
+リセット日時は「**翌日 00:00 UTC**」とする。
+
+この変更に伴い、以下を月次から日次へ改めた。
+
+- **CloudFormation パラメータ名**: `MonthlyTokenLimit` → `DailyTokenLimit`（デフォルト 500000
+  据え置き）、`MonthlyTranscribeJobLimit` → `DailyTranscribeJobLimit`（デフォルト 10 据え置き）。
+- **アラームの評価窓**: `BedrockInvocationAlarm` / `TranscribeJobAlarm` の `Period` を
+  `2592000`（30 日相当）から `86400`（1 日）へ戻し、`AlarmDescription` を「日次上限」へ修正。
+- **集約 Lambda の集計窓**: 集計起点を「当月 1 日 00:00 UTC」から「当日 00:00 UTC」へ変更
+  （`_day_start` / `_next_day_start`）。環境変数を `DAILY_TOKEN_LIMIT` /
+  `DAILY_TRANSCRIBE_JOB_LIMIT` へリネーム。返却 JSON キーを `daily_token_limit` /
+  `daily_transcribe_job_limit` へ変更。
+- **アプリ側**: `UsageInfo` のフィールド名を `daily_token_limit` /
+  `daily_transcribe_job_limit` へリネームし、`usage_client._map_response` のマッピングキー、
+  メインウィンドウの表示文言（「日次上限」）を日次へ統一。
+
+「決定 1」で述べた月次前提の記述（暦月境界の近似・翌月 1 日リセット等）は本追記により
+無効となり、日次前提（当日 00:00 UTC 起点・翌日 00:00 UTC リセット）に置き換わる。

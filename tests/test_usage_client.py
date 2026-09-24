@@ -18,14 +18,14 @@ from screen_audio_recorder.models import AwsSettings, UsageInfo
 
 
 _VALID_BODY = {
-    "monthly_token_limit": 500000,
+    "daily_token_limit": 500000,
     "used_tokens": 1500,
     "remaining_tokens": 498500,
-    "monthly_transcribe_job_limit": 10,
+    "daily_transcribe_job_limit": 10,
     "used_transcribe_jobs": 3,
     "remaining_transcribe_jobs": 7,
-    "period_start": "2026-09-01T00:00:00+00:00",
-    "reset_at": "2026-10-01T00:00:00+00:00",
+    "period_start": "2026-09-24T00:00:00+00:00",
+    "reset_at": "2026-09-25T00:00:00+00:00",
     "retrieved_at": "2026-09-24T10:00:00+00:00",
 }
 
@@ -114,20 +114,20 @@ class TestSuccessfulFetch:
         result = usage_client.fetch_usage(_settings_with_endpoint())
 
         assert result.error is None
-        assert result.monthly_token_limit == 500000
+        assert result.daily_token_limit == 500000
         assert result.used_tokens == 1500
         assert result.remaining_tokens == 498500
-        assert result.monthly_transcribe_job_limit == 10
+        assert result.daily_transcribe_job_limit == 10
         assert result.used_transcribe_jobs == 3
         assert result.remaining_transcribe_jobs == 7
-        assert result.period_start == "2026-09-01T00:00:00+00:00"
-        assert result.reset_at == "2026-10-01T00:00:00+00:00"
+        assert result.period_start == "2026-09-24T00:00:00+00:00"
+        assert result.reset_at == "2026-09-25T00:00:00+00:00"
         assert result.retrieved_at == "2026-09-24T10:00:00+00:00"
 
     def test_transcribe_disabled_nulls(self, mocker) -> None:
         """Transcribe 無効ユーザーの null 項目が None として保持される."""
         body = dict(_VALID_BODY)
-        body["monthly_transcribe_job_limit"] = None
+        body["daily_transcribe_job_limit"] = None
         body["used_transcribe_jobs"] = None
         body["remaining_transcribe_jobs"] = None
         _patch_boto_layers(mocker, status_code=200, body=json.dumps(body))
@@ -136,7 +136,7 @@ class TestSuccessfulFetch:
 
         assert result.error is None
         assert result.remaining_tokens == 498500
-        assert result.monthly_transcribe_job_limit is None
+        assert result.daily_transcribe_job_limit is None
         assert result.used_transcribe_jobs is None
         assert result.remaining_transcribe_jobs is None
 
