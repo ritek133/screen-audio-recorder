@@ -225,6 +225,7 @@ def _aws_settings_to_dict(settings: AwsSettings) -> dict:
         "access_key_id": settings.access_key_id,
         "secret_access_key": settings.secret_access_key,
         "session_token": settings.session_token,
+        "usage_api_endpoint": settings.usage_api_endpoint,
     }
 
 
@@ -243,4 +244,5 @@ def _dict_to_aws_settings(data: dict) -> AwsSettings:
         access_key_id=data.get("access_key_id", ""),
         secret_access_key=data.get("secret_access_key", ""),
         session_token=data.get("session_token", ""),
+        usage_api_endpoint=data.get("usage_api_endpoint", ""),
     )

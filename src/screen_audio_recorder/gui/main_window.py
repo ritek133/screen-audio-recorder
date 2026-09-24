@@ -9,6 +9,7 @@ tkinter を使用して録画開始・停止ボタン、モード選択、
 from __future__ import annotations
 
 import logging
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
@@ -51,6 +52,7 @@ class MainWindow:
         on_llm_settings_changed: callable | None = None,
         updater: "Updater | None" = None,
         export_manager: "ExportManager | None" = None,
+        aws_settings: AwsSettings | None = None,
     ) -> None:
         """MainWindow を初期化する.
 
@@ -62,6 +64,8 @@ class MainWindow:
             on_llm_settings_changed: LLM 設定変更時のコールバック
             updater: Updater インスタンス（None の場合は更新機能無効）
             export_manager: メモエクスポートマネージャ（None の場合はエクスポート設定タブ無効）
+            aws_settings: AWS 接続設定（残存容量表示に使用）。None の場合は
+                使用量 API 未設定として扱い、残量表示は「未設定」フォールバックになる。
         """
         self._root = root
         self._recorder_controller = recorder_controller
@@ -70,6 +74,7 @@ class MainWindow:
         self._on_llm_settings_changed = on_llm_settings_changed
         self._updater = updater
         self._export_manager = export_manager
+        self._aws_settings = aws_settings
 
         self._root.title("Screen Audio Recorder")
         self._root.resizable(True, True)
@@ -82,6 +87,11 @@ class MainWindow:
 
         # ステータス変数
         self._status_var = tk.StringVar(value="モデル読み込み中...")
+
+        # 残存容量表示用変数
+        self._usage_tokens_var = tk.StringVar(value="残トークン: -")
+        self._usage_jobs_var = tk.StringVar(value="残文字起こし: -")
+        self._usage_reset_var = tk.StringVar(value="リセット: -")
 
         # 初期化完了フラグ
         self._ready = False
@@ -106,6 +116,9 @@ class MainWindow:
 
         # WM_DELETE_WINDOW ハンドラを設定（ダウンロード中の終了確認）
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # 起動時に残存容量を取得する（バックグラウンド。未設定なら何もしない）。
+        self.refresh_usage()
 
     # ------------------------------------------------------------------
     # UI 構築
@@ -181,6 +194,30 @@ class MainWindow:
         )
         self._stop_btn.pack(side=tk.LEFT)
 
+        # --- 残存容量表示パネル（ADR-006 案B）---
+        usage_frame = ttk.LabelFrame(record_tab, text="残存容量（SaaS 利用状況）", padding=4)
+        usage_frame.pack(fill=tk.X, pady=(0, 4))
+
+        usage_row = ttk.Frame(usage_frame)
+        usage_row.pack(fill=tk.X)
+
+        ttk.Label(usage_row, textvariable=self._usage_tokens_var).pack(
+            side=tk.LEFT, padx=(0, 12)
+        )
+        ttk.Label(usage_row, textvariable=self._usage_jobs_var).pack(
+            side=tk.LEFT, padx=(0, 12)
+        )
+        ttk.Label(usage_row, textvariable=self._usage_reset_var).pack(
+            side=tk.LEFT, padx=(0, 12)
+        )
+
+        self._usage_refresh_btn = ttk.Button(
+            usage_row,
+            text="残量更新",
+            command=self.refresh_usage,
+        )
+        self._usage_refresh_btn.pack(side=tk.RIGHT)
+
         # --- MemoListView ---
         from screen_audio_recorder.gui.memo_list_view import MemoListView
 
@@ -234,8 +271,86 @@ class MainWindow:
 
     def _on_llm_settings_changed_internal(self, settings: LlmSettings, aws_settings: AwsSettings | None = None) -> None:
         """LLM 設定変更時の内部ハンドラ."""
+        if aws_settings is not None:
+            # AWS 設定（使用量 API エンドポイント含む）が変わった場合は保持し、
+            # 残量表示を更新できるようにする。
+            self.update_aws_settings(aws_settings)
         if self._on_llm_settings_changed is not None:
             self._on_llm_settings_changed(settings, aws_settings)
+
+    # ------------------------------------------------------------------
+    # 残存容量表示（ADR-006 案B）
+    # ------------------------------------------------------------------
+
+    def update_aws_settings(self, aws_settings: AwsSettings | None) -> None:
+        """AWS 設定を更新し、残存容量表示を再取得する.
+
+        Args:
+            aws_settings: 新しい AWS 接続設定（使用量 API エンドポイント含む）。
+        """
+        self._aws_settings = aws_settings
+        self.refresh_usage()
+
+    def refresh_usage(self) -> None:
+        """残存容量をバックグラウンドで取得し、完了後に表示を更新する.
+
+        ネットワーク I/O を伴うため daemon スレッドで取得し、結果は
+        ``root.after`` を通じて GUI スレッドで反映する。取得失敗や未設定でも
+        録画機能は阻害しない。
+        """
+        if self._aws_settings is None or not (self._aws_settings.usage_api_endpoint or "").strip():
+            # 未設定時はフォールバック表示にとどめる。
+            self._usage_tokens_var.set("残トークン: 未設定")
+            self._usage_jobs_var.set("残文字起こし: 未設定")
+            self._usage_reset_var.set("リセット: -")
+            return
+
+        self._usage_tokens_var.set("残トークン: 取得中...")
+        self._usage_jobs_var.set("残文字起こし: 取得中...")
+        self._usage_reset_var.set("リセット: 取得中...")
+
+        aws_settings = self._aws_settings
+
+        def _worker() -> None:
+            from screen_audio_recorder import usage_client
+
+            usage = usage_client.fetch_usage(aws_settings)
+            # GUI 更新はメインスレッドへ委譲する。
+            try:
+                self._root.after(0, lambda: self._apply_usage(usage))
+            except Exception:
+                logger.debug("残量表示の GUI 反映をスケジュールできませんでした。")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_usage(self, usage) -> None:
+        """取得した使用量情報を表示用 StringVar に反映する（GUI スレッド）.
+
+        Args:
+            usage: :class:`~screen_audio_recorder.models.UsageInfo`。
+        """
+        if usage.error is not None:
+            self._usage_tokens_var.set("残トークン: 取得できませんでした")
+            self._usage_jobs_var.set("残文字起こし: 取得できませんでした")
+            self._usage_reset_var.set("リセット: -")
+            return
+
+        if usage.remaining_tokens is not None:
+            self._usage_tokens_var.set(
+                f"残トークン: {usage.remaining_tokens} / 月上限 {usage.monthly_token_limit}"
+            )
+        else:
+            self._usage_tokens_var.set("残トークン: -")
+
+        if usage.remaining_transcribe_jobs is not None:
+            self._usage_jobs_var.set(
+                f"残文字起こし: {usage.remaining_transcribe_jobs} / 月上限 {usage.monthly_transcribe_job_limit}"
+            )
+        else:
+            # Transcribe 無効ユーザーは対象外。
+            self._usage_jobs_var.set("残文字起こし: 対象外")
+
+        self._usage_reset_var.set(f"リセット: {usage.reset_at or '-'}")
 
     # ------------------------------------------------------------------
     # マイクデバイス読み込み

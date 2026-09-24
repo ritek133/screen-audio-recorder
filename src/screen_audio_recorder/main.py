@@ -197,6 +197,9 @@ def main() -> None:
     def on_llm_settings_changed(new_settings, new_aws_settings=None):
         llm_client.reload(new_settings, new_aws_settings)
         text_post_processor.update_settings(new_settings)
+        # 使用量 API エンドポイントが変わった場合に備え、メインウィンドウへ反映する。
+        if new_aws_settings is not None:
+            main_window.update_aws_settings(new_aws_settings)
         logger.info("LLM 設定を更新しました。バックエンド: %s", new_settings.backend.value)
 
     # RecorderController を初期化（全コンポーネントを結合）
@@ -237,6 +240,7 @@ def main() -> None:
         on_llm_settings_changed=on_llm_settings_changed,
         updater=updater,
         export_manager=export_manager,
+        aws_settings=aws_settings,
     )
 
     logger.info("アプリケーションの初期化が完了しました。")
