@@ -5,22 +5,13 @@ boto3 クライアントの生成を共通化し、認証方式の切り替え�
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 from typing import Any
 
 from screen_audio_recorder.models import AwsAuthMethod, AwsSettings
 
 logger = logging.getLogger(__name__)
-
-try:
-    import boto3
-    from botocore.config import Config as BotoConfig
-
-    _BOTO3_AVAILABLE = True
-except ImportError:
-    boto3 = None  # type: ignore[assignment]
-    BotoConfig = None  # type: ignore[assignment,misc]
-    _BOTO3_AVAILABLE = False
 
 
 def _get_ca_bundle() -> str | None:
@@ -80,8 +71,16 @@ def _get_ca_bundle() -> str | None:
 
 
 def is_boto3_available() -> bool:
-    """boto3 が利用可能かどうかを返す."""
-    return _BOTO3_AVAILABLE
+    """boto3 が利用可能かどうかを返す.
+
+    起動高速化（ADR-005 決定事項 2）のため、``import boto3`` を実行せずに
+    ``importlib.util.find_spec`` でモジュールの存在のみを確認する。boto3 は
+    import コストが大きいため、AWS バックエンドを実際に使うまでロードしない。
+    """
+    try:
+        return importlib.util.find_spec("boto3") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def create_boto3_session(aws_settings: AwsSettings) -> Any:
@@ -96,11 +95,14 @@ def create_boto3_session(aws_settings: AwsSettings) -> Any:
     Raises:
         RuntimeError: boto3 が利用不可の場合
     """
-    if not _BOTO3_AVAILABLE:
+    # boto3 は import コストが大きいため、実際に AWS を使うこの時点で遅延 import する。
+    try:
+        import boto3
+    except ImportError as exc:
         raise RuntimeError(
             "boto3 がインストールされていません。\n"
             "pip install boto3 を実行してください。"
-        )
+        ) from exc
 
     if aws_settings.auth_method == AwsAuthMethod.ACCESS_KEY:
         # アクセスキー直接入力
@@ -141,6 +143,8 @@ def create_boto3_client(service_name: str, aws_settings: AwsSettings, **kwargs) 
 
     # Bedrock は読み取りタイムアウトを長めに設定
     if service_name in ("bedrock-runtime",):
+        from botocore.config import Config as BotoConfig
+
         config = BotoConfig(
             read_timeout=600,
             connect_timeout=10,
