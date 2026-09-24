@@ -9,6 +9,7 @@ tkinter を使用して録画開始・停止ボタン、モード選択、
 from __future__ import annotations
 
 import logging
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
@@ -79,6 +80,8 @@ class MainWindow:
 
         # マイクデバイス変数
         self._mic_var = tk.StringVar()
+        # マイクデバイス一覧（非同期列挙の完了までは空）
+        self._mic_devices: list = []
 
         # ステータス変数
         self._status_var = tk.StringVar(value="モデル読み込み中...")
@@ -242,13 +245,35 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def _load_mic_devices(self) -> None:
-        """マイクデバイス一覧を読み込んでコンボボックスに設定する."""
-        try:
-            devices = self._audio_capture.list_mic_devices()
-        except Exception:
-            logger.exception("マイクデバイス一覧の取得に失敗しました。")
-            devices = []
+        """マイクデバイス一覧を非同期に読み込んでコンボボックスに設定する.
 
+        PyAudio 経由のデバイス列挙は環境によって数百 ms〜秒級の同期 I/O となり、
+        起動時（mainloop 前）に走ると体感を悪化させる（ADR-005 決定事項 3）。
+        そのため列挙は daemon スレッドで実行し、完了後に ``after_idle`` 経由で
+        GUI スレッドからコンボボックスへ反映する。列挙中はプレースホルダを表示する。
+        """
+        # 列挙中のプレースホルダ表示
+        self._mic_combo["values"] = ["(マイクを検出中...)"]
+        self._mic_combo.current(0)
+
+        def _worker() -> None:
+            try:
+                devices = self._audio_capture.list_mic_devices()
+            except Exception:
+                logger.exception("マイクデバイス一覧の取得に失敗しました。")
+                devices = []
+            # GUI スレッドで反映
+            try:
+                self._root.after_idle(self._apply_mic_devices, devices)
+            except Exception:
+                # ウィンドウ破棄後などは無視
+                pass
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+    def _apply_mic_devices(self, devices: list) -> None:
+        """列挙結果をコンボボックスへ反映する（GUI スレッドで呼ばれる）."""
         self._mic_devices = devices
 
         if devices:
