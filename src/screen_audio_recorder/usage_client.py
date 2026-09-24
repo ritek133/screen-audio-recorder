@@ -50,7 +50,11 @@ def fetch_usage(aws_settings: AwsSettings) -> UsageInfo:
         return UsageInfo(error="使用量 API のエンドポイントが設定されていません。")
 
     # boto3 / botocore を遅延 import する（起動最適化 ADR-005）。
-    from screen_audio_recorder.aws_utils import create_boto3_session, is_boto3_available
+    from screen_audio_recorder.aws_utils import (
+        create_boto3_session,
+        get_ca_bundle,
+        is_boto3_available,
+    )
 
     if not is_boto3_available():
         return UsageInfo(error="boto3 がインストールされていないため使用量を取得できません。")
@@ -76,7 +80,15 @@ def fetch_usage(aws_settings: AwsSettings) -> UsageInfo:
         # 送信は botocore の HTTP セッションを使う（余計な依存を増やさない）。
         from botocore.httpsession import URLLib3Session
 
-        http = URLLib3Session()
+        # 既存の boto3 経路（create_boto3_client）と TLS 検証挙動を揃えるため、
+        # CA バンドルが得られた場合は verify に反映する。企業プロキシ環境の
+        # Windows で Bedrock/Transcribe は通るのに残量取得だけ失敗する不整合を防ぐ。
+        # ca_bundle が None の場合は従来どおりデフォルト検証で送信する。
+        ca_bundle = get_ca_bundle()
+        if ca_bundle:
+            http = URLLib3Session(verify=ca_bundle)
+        else:
+            http = URLLib3Session()
         response = http.send(prepared)
 
         status_code = response.status_code

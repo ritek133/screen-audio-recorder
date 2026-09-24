@@ -154,6 +154,48 @@ class TestSuccessfulFetch:
 
 
 # ---------------------------------------------------------------------------
+# (d) CA バンドル（TLS 検証）
+# ---------------------------------------------------------------------------
+
+
+class TestCaBundleVerify:
+    """CA バンドルを URLLib3Session の verify に反映するテスト."""
+
+    def test_ca_bundle_passed_as_verify(self, mocker) -> None:
+        """CA バンドルが得られたとき URLLib3Session に verify が渡される."""
+        # URLLib3Session を含む送信レイヤをモックする。
+        _patch_boto_layers(mocker, status_code=200)
+        # get_ca_bundle がパスを返すようにモックする。
+        mocker.patch(
+            "screen_audio_recorder.aws_utils.get_ca_bundle",
+            return_value="/tmp/ca-bundle.pem",
+        )
+        session_cls = mocker.patch("botocore.httpsession.URLLib3Session")
+        session_cls.return_value = mocker.MagicMock()
+
+        usage_client.fetch_usage(_settings_with_endpoint())
+
+        # URLLib3Session のコンストラクタに verify=<ca_bundle> が渡ること。
+        assert session_cls.call_args is not None
+        assert session_cls.call_args.kwargs.get("verify") == "/tmp/ca-bundle.pem"
+
+    def test_no_ca_bundle_uses_default_verify(self, mocker) -> None:
+        """CA バンドルが None のとき verify は指定されない（デフォルト検証）."""
+        _patch_boto_layers(mocker, status_code=200)
+        mocker.patch(
+            "screen_audio_recorder.aws_utils.get_ca_bundle", return_value=None
+        )
+        session_cls = mocker.patch("botocore.httpsession.URLLib3Session")
+        session_cls.return_value = mocker.MagicMock()
+
+        usage_client.fetch_usage(_settings_with_endpoint())
+
+        # verify を渡さずに生成されること。
+        assert session_cls.call_args is not None
+        assert "verify" not in session_cls.call_args.kwargs
+
+
+# ---------------------------------------------------------------------------
 # (c) 非 200 / 例外
 # ---------------------------------------------------------------------------
 
