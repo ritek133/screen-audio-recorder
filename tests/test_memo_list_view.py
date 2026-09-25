@@ -325,3 +325,65 @@ class TestFormatBodyForDisplay:
         lines = formatted.split("\n")
         assert all(len(line) <= 1000 for line in lines)
         assert formatted.replace("\n", "") == body
+
+
+# ---------------------------------------------------------------------------
+# 再処理・再文字起こし完了時の残存容量再取得通知テスト
+# ---------------------------------------------------------------------------
+
+
+class TestOnProcessingDoneCallback:
+    """再処理・再文字起こし完了時に on_processing_done が呼ばれることを検証する.
+
+    録画→文字起こしフローは recorder_controller 経由で残量が更新されるが、
+    再処理・再文字起こしはその経路を通らない。ここで on_processing_done を
+    呼ぶことで、LLM / Transcribe 使用後に残存容量が再取得される。
+    実装を revert するとこのテストは失敗する。
+    """
+
+    def _make_view(self, on_processing_done) -> MemoListView:
+        """tkinter を生成せずに完了ハンドラ検証に必要な最小状態を組み立てる."""
+        view = object.__new__(MemoListView)
+        view._on_processing_done = on_processing_done
+        # ボタン config / refresh は副作用を避けてモック化する。
+        view._reprocess_btn = MagicMock()
+        view._retranscribe_btn = MagicMock()
+        view.refresh = MagicMock()
+        return view
+
+    def test_reprocess_done_invokes_callback(self) -> None:
+        """再処理完了で on_processing_done が 1 回呼ばれる."""
+        cb = MagicMock()
+        view = self._make_view(cb)
+
+        view._on_reprocess_done()
+
+        cb.assert_called_once()
+        view.refresh.assert_called_once()
+
+    def test_retranscribe_done_invokes_callback(self) -> None:
+        """再文字起こし完了で on_processing_done が 1 回呼ばれる."""
+        cb = MagicMock()
+        view = self._make_view(cb)
+
+        view._on_retranscribe_done()
+
+        cb.assert_called_once()
+        view.refresh.assert_called_once()
+
+    def test_none_callback_does_not_raise(self) -> None:
+        """コールバック未設定でも例外を送出しない."""
+        view = self._make_view(None)
+
+        # 例外が出ないことを確認（明示 assert は不要だが呼び出しが通ること）。
+        view._on_reprocess_done()
+        view._on_retranscribe_done()
+
+    def test_callback_exception_is_swallowed(self) -> None:
+        """コールバックが例外を投げても GUI 更新を妨げない."""
+        cb = MagicMock(side_effect=RuntimeError("boom"))
+        view = self._make_view(cb)
+
+        # 例外が伝播しないこと。
+        view._on_reprocess_done()
+        view.refresh.assert_called_once()
