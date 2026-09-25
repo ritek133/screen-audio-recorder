@@ -14,11 +14,15 @@ from screen_audio_recorder.models import AwsAuthMethod, AwsSettings
 logger = logging.getLogger(__name__)
 
 
-def _get_ca_bundle() -> str | None:
-    """SSL CA バンドルのパスを取得する.
+def get_ca_bundle() -> str | None:
+    """SSL CA バンドルのパスを取得する（公開ヘルパー）.
 
     環境変数 AWS_CA_BUNDLE が設定されていればそれを使い、
     なければ certifi + Windows 証明書ストアのマージ証明書を生成する。
+
+    ``create_boto3_client`` の ``verify`` 指定と同じ CA バンドル解決を
+    ``usage_client`` などの直接 HTTP 送信からも再利用できるよう公開する。
+    boto3 経路との TLS 検証挙動を対称に保つのが目的。
     """
     import os
 
@@ -68,6 +72,14 @@ def _get_ca_bundle() -> str | None:
         logger.debug("CA バンドル生成に失敗: %s", exc)
 
     return None
+
+
+def _get_ca_bundle() -> str | None:
+    """後方互換のための内部エイリアス（:func:`get_ca_bundle` へ委譲）.
+
+    既存の ``create_boto3_client`` の挙動を変えないため名前を残している。
+    """
+    return get_ca_bundle()
 
 
 def is_boto3_available() -> bool:

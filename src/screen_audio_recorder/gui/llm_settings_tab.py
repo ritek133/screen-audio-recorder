@@ -151,6 +151,11 @@ class LlmSettingsTab:
         self._aws_session_token_var = tk.StringVar(
             value=self._aws_settings.session_token
         )
+        # 使用量集約 API（ADR-006 案B）のエンドポイント URL。
+        # CloudFormation スタックの Output "UsageApiEndpoint" を貼り付けて設定する。
+        self._aws_usage_api_endpoint_var = tk.StringVar(
+            value=self._aws_settings.usage_api_endpoint
+        )
 
         self._build_ui()
 
@@ -555,6 +560,23 @@ class LlmSettingsTab:
             show="*",
             width=40,
         ).pack(fill=tk.X)
+
+        # 使用量 API エンドポイント（認証方式に依存しない共通設定）
+        usage_api_frame = ttk.Frame(aws_frame)
+        usage_api_frame.pack(fill=tk.X, pady=(4, 4))
+        ttk.Label(
+            usage_api_frame, text="使用量 API エンドポイント URL（残存容量表示用・任意）:"
+        ).pack(anchor=tk.W)
+        ttk.Entry(
+            usage_api_frame,
+            textvariable=self._aws_usage_api_endpoint_var,
+            width=60,
+        ).pack(fill=tk.X)
+        ttk.Label(
+            usage_api_frame,
+            text="※ CloudFormation スタックの Output「UsageApiEndpoint」を貼り付けてください",
+            foreground="gray",
+        ).pack(anchor=tk.W)
 
         ttk.Label(
             aws_frame,
@@ -1114,6 +1136,7 @@ class LlmSettingsTab:
             access_key_id=self._aws_access_key_var.get().strip(),
             secret_access_key=self._aws_secret_key_var.get().strip(),
             session_token=self._aws_session_token_var.get().strip(),
+            usage_api_endpoint=self._aws_usage_api_endpoint_var.get().strip(),
         )
 
     @staticmethod

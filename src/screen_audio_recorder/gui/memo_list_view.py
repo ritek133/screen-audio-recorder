@@ -51,7 +51,7 @@ class MemoListView:
         frame: 外部から参照可能なルートフレーム
     """
 
-    def __init__(self, parent: tk.Widget, memo_store: MemoStore, text_post_processor=None, transcriber=None, root=None, raw_transcript_store=None) -> None:
+    def __init__(self, parent: tk.Widget, memo_store: MemoStore, text_post_processor=None, transcriber=None, root=None, raw_transcript_store=None, on_processing_done=None) -> None:
         """MemoListView を初期化する.
 
         Args:
@@ -62,12 +62,16 @@ class MemoListView:
             root: tkinter ルートウィンドウ（スレッド通知用）
             raw_transcript_store: RawTranscriptStore インスタンス（再文字起こし時の
                 生データ保存用）。None の場合は再文字起こし時に生データを保存しない。
+            on_processing_done: 再処理・再文字起こしの完了時に呼ばれるコールバック
+                （引数なし）。残存容量の再取得など、LLM / Transcribe 使用後の
+                後処理に使う。None の場合は何もしない。
         """
         self._memo_store = memo_store
         self._text_post_processor = text_post_processor
         self._transcriber = transcriber
         self._root = root
         self._raw_transcript_store = raw_transcript_store
+        self._on_processing_done = on_processing_done
         self._current_page = 1
         self._total_pages = 1
         self._memos: list[Memo] = []
@@ -518,6 +522,8 @@ class MemoListView:
         """再処理完了時の GUI 更新."""
         self._reprocess_btn.config(text="🔄 再処理")
         self.refresh()
+        # LLM 使用後なので残存容量を再取得する（設定されていれば）。
+        self._notify_processing_done()
 
     def _on_retranscribe(self) -> None:
         """再文字起こしボタンのイベントハンドラ。選択中のメモの音声を再度文字起こしする."""
@@ -600,6 +606,20 @@ class MemoListView:
         """再文字起こし完了時の GUI 更新."""
         self._retranscribe_btn.config(text="🎙 再文字起こし")
         self.refresh()
+        # Transcribe / LLM 使用後なので残存容量を再取得する（設定されていれば）。
+        self._notify_processing_done()
+
+    def _notify_processing_done(self) -> None:
+        """再処理・再文字起こし完了を外部へ通知する（残存容量の再取得用）.
+
+        コールバック未設定時や例外時でも GUI 更新を妨げないよう、失敗は握りつぶす。
+        """
+        if self._on_processing_done is None:
+            return
+        try:
+            self._on_processing_done()
+        except Exception:
+            logger.debug("再処理完了通知（残量更新）の呼び出しに失敗しました。")
 
     # ------------------------------------------------------------------
     # ヘルパー

@@ -52,6 +52,7 @@ class MainWindow:
         on_llm_settings_changed: callable | None = None,
         updater: "Updater | None" = None,
         export_manager: "ExportManager | None" = None,
+        aws_settings: AwsSettings | None = None,
     ) -> None:
         """MainWindow を初期化する.
 
@@ -63,6 +64,8 @@ class MainWindow:
             on_llm_settings_changed: LLM 設定変更時のコールバック
             updater: Updater インスタンス（None の場合は更新機能無効）
             export_manager: メモエクスポートマネージャ（None の場合はエクスポート設定タブ無効）
+            aws_settings: AWS 接続設定（残存容量表示に使用）。None の場合は
+                使用量 API 未設定として扱い、残量表示は「未設定」フォールバックになる。
         """
         self._root = root
         self._recorder_controller = recorder_controller
@@ -71,6 +74,7 @@ class MainWindow:
         self._on_llm_settings_changed = on_llm_settings_changed
         self._updater = updater
         self._export_manager = export_manager
+        self._aws_settings = aws_settings
 
         self._root.title("Screen Audio Recorder")
         self._root.resizable(True, True)
@@ -85,6 +89,9 @@ class MainWindow:
 
         # ステータス変数
         self._status_var = tk.StringVar(value="モデル読み込み中...")
+
+        # 残存容量表示用変数（メイン下部のステータス欄に 1 行で表示する）
+        self._usage_status_var = tk.StringVar(value="残存容量: -")
 
         # 初期化完了フラグ
         self._ready = False
@@ -110,6 +117,9 @@ class MainWindow:
         # WM_DELETE_WINDOW ハンドラを設定（ダウンロード中の終了確認）
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # 起動時に残存容量を取得する（バックグラウンド。未設定なら何もしない）。
+        self.refresh_usage()
+
     # ------------------------------------------------------------------
     # UI 構築
     # ------------------------------------------------------------------
@@ -117,14 +127,22 @@ class MainWindow:
     def _build_ui(self) -> None:
         """UI コンポーネントを構築・配置する."""
         # --- ステータスバー（先に pack して下部スペースを確保）---
-        status_bar = ttk.Label(
-            self._root,
-            textvariable=self._status_var,
-            relief=tk.SUNKEN,
-            anchor=tk.W,
-            padding=(4, 2),
-        )
+        # 左: 一般ステータス（モデル読み込み等）／右: 残存容量（SaaS 利用状況）
+        status_bar = ttk.Frame(self._root, relief=tk.SUNKEN, padding=(4, 2))
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        ttk.Label(
+            status_bar,
+            textvariable=self._status_var,
+            anchor=tk.W,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 残存容量表示（右寄せ）。使用量 API 未設定時は「未設定」表示になる。
+        ttk.Label(
+            status_bar,
+            textvariable=self._usage_status_var,
+            anchor=tk.E,
+        ).pack(side=tk.RIGHT, padx=(12, 0))
 
         # メインフレーム
         main_frame = ttk.Frame(self._root, padding=8)
@@ -184,6 +202,10 @@ class MainWindow:
         )
         self._stop_btn.pack(side=tk.LEFT)
 
+        # 残存容量は録画タブではなく、メイン下部のステータス欄に表示する
+        # （手動更新ボタンは廃止。更新はアプリ起動時／設定変更時／文字起こし・
+        #  LLM 要約完了時に自動で行う）。
+
         # --- MemoListView ---
         from screen_audio_recorder.gui.memo_list_view import MemoListView
 
@@ -194,6 +216,8 @@ class MainWindow:
             transcriber=getattr(self._recorder_controller, "_transcriber", None),
             root=self._root,
             raw_transcript_store=getattr(self._recorder_controller, "_raw_transcript_store", None),
+            # 再処理・再文字起こし完了時に残存容量を再取得する。
+            on_processing_done=self.refresh_usage,
         )
         self._memo_list_view.frame.pack(fill=tk.BOTH, expand=True)
 
@@ -284,8 +308,90 @@ class MainWindow:
 
     def _on_llm_settings_changed_internal(self, settings: LlmSettings, aws_settings: AwsSettings | None = None) -> None:
         """LLM 設定変更時の内部ハンドラ."""
+        if aws_settings is not None:
+            # AWS 設定（使用量 API エンドポイント含む）が変わった場合は保持し、
+            # 残量表示を更新できるようにする。
+            self.update_aws_settings(aws_settings)
         if self._on_llm_settings_changed is not None:
             self._on_llm_settings_changed(settings, aws_settings)
+
+    # ------------------------------------------------------------------
+    # 残存容量表示（ADR-006 案B）
+    # ------------------------------------------------------------------
+
+    def update_aws_settings(self, aws_settings: AwsSettings | None) -> None:
+        """AWS 設定を更新し、残存容量表示を再取得する.
+
+        残存容量の自動更新の主なタイミングは「アプリ起動時」と
+        「文字起こし・LLM 要約完了時（_on_memo_saved 経由）」の 2 つに限定するが、
+        ここでの再取得は例外的に残す。使用量 API のエンドポイントが変わった直後に
+        表示を更新できないと、エンドポイント未設定→設定直後に残量が反映されず
+        実用上不便なため。設定変更は稀なイベントであり、ユーザー体験上必要な
+        補助的な再取得と位置づける。
+
+        Args:
+            aws_settings: 新しい AWS 接続設定（使用量 API エンドポイント含む）。
+        """
+        self._aws_settings = aws_settings
+        self.refresh_usage()
+
+    def refresh_usage(self) -> None:
+        """残存容量をバックグラウンドで取得し、完了後に表示を更新する.
+
+        ネットワーク I/O を伴うため daemon スレッドで取得し、結果は
+        ``root.after`` を通じて GUI スレッドで反映する。取得失敗や未設定でも
+        録画機能は阻害しない。
+        """
+        if self._aws_settings is None or not (self._aws_settings.usage_api_endpoint or "").strip():
+            # 未設定時はフォールバック表示にとどめる。
+            self._usage_status_var.set("残存容量: 未設定")
+            return
+
+        self._usage_status_var.set("残存容量: 取得中...")
+
+        aws_settings = self._aws_settings
+
+        def _worker() -> None:
+            from screen_audio_recorder import usage_client
+
+            usage = usage_client.fetch_usage(aws_settings)
+            # GUI 更新はメインスレッドへ委譲する。
+            try:
+                self._root.after(0, lambda: self._apply_usage(usage))
+            except Exception:
+                logger.debug("残量表示の GUI 反映をスケジュールできませんでした。")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_usage(self, usage) -> None:
+        """取得した使用量情報を表示用 StringVar に反映する（GUI スレッド）.
+
+        Args:
+            usage: :class:`~screen_audio_recorder.models.UsageInfo`。
+        """
+        if usage.error is not None:
+            self._usage_status_var.set("残存容量: 取得できませんでした")
+            return
+
+        # 残トークン
+        if usage.remaining_tokens is not None:
+            tokens_part = f"残トークン {usage.remaining_tokens}/{usage.daily_token_limit}"
+        else:
+            tokens_part = "残トークン -"
+
+        # 残文字起こし回数（Transcribe 無効ユーザーは対象外）
+        if usage.remaining_transcribe_jobs is not None:
+            jobs_part = (
+                f"残文字起こし {usage.remaining_transcribe_jobs}/{usage.daily_transcribe_job_limit}"
+            )
+        else:
+            jobs_part = "残文字起こし 対象外"
+
+        reset_part = f"リセット {usage.reset_at or '-'}"
+
+        self._usage_status_var.set(
+            f"残存容量: {tokens_part} | {jobs_part} | {reset_part}"
+        )
 
     # ------------------------------------------------------------------
     # マイクデバイス読み込み
@@ -424,6 +530,16 @@ class MainWindow:
         self._memo_list_view.refresh()
         self._status_var.set("停止中")
         logger.info("メモ一覧を更新しました。")
+
+        # 残存容量の自動更新（文字起こし・LLM 要約完了時）。
+        # このコールバックは recorder_controller の _on_transcribe_complete で
+        # 「文字起こし → LLM 後処理（要約）→ メモ保存」がすべて完了した後に
+        # GUI スレッドで 1 回だけ呼ばれる。文字起こし（Transcribe）と要約（Bedrock）は
+        # 同一パイプラインで連続実行され、それぞれのメトリクスに反映されるため、
+        # 完了後にまとめて 1 回だけ使用量を取り直すのが正しく、二重取得も避けられる。
+        # refresh_usage 自体はネットワーク I/O を daemon スレッドで行い root.after で
+        # GUI 反映する既存パターンのため、GUI スレッドから呼んでも問題ない。
+        self.refresh_usage()
 
     def _on_close(self) -> None:
         """ウィンドウ閉じボタンのハンドラ.

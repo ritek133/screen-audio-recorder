@@ -9,7 +9,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from screen_audio_recorder.models import RecordingRegion, RecordingMode
+from screen_audio_recorder.models import (
+    AwsSettings,
+    RecordingRegion,
+    RecordingMode,
+    UsageInfo,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -231,3 +236,64 @@ class TestRecordingMode:
     def test_two_modes_exist(self) -> None:
         """2 つのモードが存在する."""
         assert len(RecordingMode) == 2
+
+
+# ---------------------------------------------------------------------------
+# UsageInfo のテスト（ADR-006 案B）
+# ---------------------------------------------------------------------------
+
+
+class TestUsageInfo:
+    """UsageInfo データクラスのテスト."""
+
+    def test_default_all_none(self) -> None:
+        """デフォルトでは全フィールドが None である."""
+        usage = UsageInfo()
+        assert usage.daily_token_limit is None
+        assert usage.used_tokens is None
+        assert usage.remaining_tokens is None
+        assert usage.daily_transcribe_job_limit is None
+        assert usage.used_transcribe_jobs is None
+        assert usage.remaining_transcribe_jobs is None
+        assert usage.period_start is None
+        assert usage.reset_at is None
+        assert usage.retrieved_at is None
+        assert usage.error is None
+
+    def test_construct_with_values(self) -> None:
+        """全フィールドを指定して生成できる."""
+        usage = UsageInfo(
+            daily_token_limit=500000,
+            used_tokens=1000,
+            remaining_tokens=499000,
+            daily_transcribe_job_limit=10,
+            used_transcribe_jobs=2,
+            remaining_transcribe_jobs=8,
+            period_start="2026-09-24T00:00:00+00:00",
+            reset_at="2026-09-25T00:00:00+00:00",
+            retrieved_at="2026-09-24T10:00:00+00:00",
+        )
+        assert usage.remaining_tokens == 499000
+        assert usage.remaining_transcribe_jobs == 8
+        assert usage.reset_at == "2026-09-25T00:00:00+00:00"
+        assert usage.error is None
+
+    def test_error_field(self) -> None:
+        """error フィールドにメッセージを格納できる."""
+        usage = UsageInfo(error="取得できませんでした")
+        assert usage.error == "取得できませんでした"
+
+
+class TestAwsSettingsUsageEndpoint:
+    """AwsSettings.usage_api_endpoint のテスト."""
+
+    def test_default_empty(self) -> None:
+        """usage_api_endpoint のデフォルトは空文字である."""
+        settings_obj = AwsSettings()
+        assert settings_obj.usage_api_endpoint == ""
+
+    def test_can_set_endpoint(self) -> None:
+        """usage_api_endpoint に URL を設定できる."""
+        url = "https://example.execute-api.ap-northeast-1.amazonaws.com/prod/usage"
+        settings_obj = AwsSettings(usage_api_endpoint=url)
+        assert settings_obj.usage_api_endpoint == url

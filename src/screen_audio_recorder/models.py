@@ -188,6 +188,9 @@ class AwsSettings:
         access_key_id: アクセスキー ID（auth_method=ACCESS_KEY 時）
         secret_access_key: シークレットアクセスキー（auth_method=ACCESS_KEY 時）
         session_token: セッショントークン（オプション、STS 一時認証用）
+        usage_api_endpoint: 使用量集約 API（ADR-006 案B）のエンドポイント URL。
+            残存容量（残トークン・残文字起こし回数）の取得に使用する。
+            上限値そのものはアプリに保存せず、サーバー側に閉じる。
     """
 
     auth_method: AwsAuthMethod = AwsAuthMethod.PROFILE
@@ -196,6 +199,49 @@ class AwsSettings:
     access_key_id: str = ""
     secret_access_key: str = ""
     session_token: str = ""
+    # 使用量集約 API（ADR-006 案B）のエンドポイント URL。
+    # 例: https://<RestApiId>.execute-api.<region>.amazonaws.com/prod/usage
+    # 上限値（日次トークン上限等）はサーバー側（Lambda 環境変数）に閉じるため、
+    # アプリ側には保存しない。アプリはこの URL を SigV4 署名付き GET で呼び、
+    # Lambda が返した残量・上限・使用量をそのまま表示するだけとする。
+    usage_api_endpoint: str = ""
+
+
+@dataclass
+class UsageInfo:
+    """SaaS 利用者ごとの残存容量（使用量情報）を表すデータクラス.
+
+    ADR-006 案B に基づき、使用量集約 API（Lambda）が返す JSON を
+    そのままマッピングして保持する。上限値はサーバー側で算出・注入されるため、
+    アプリは受け取った値を表示するだけでよい。
+
+    Transcribe が無効なユーザーの場合、文字起こし関連フィールド
+    （daily_transcribe_job_limit / used_transcribe_jobs /
+    remaining_transcribe_jobs）は None になる。
+
+    Attributes:
+        daily_token_limit: 日次トークン上限。取得失敗時は None。
+        used_tokens: 当日使用トークン数。取得失敗時は None。
+        remaining_tokens: 残トークン数。取得失敗時は None。
+        daily_transcribe_job_limit: 日次文字起こし上限。無効時・失敗時は None。
+        used_transcribe_jobs: 当日使用文字起こし回数。無効時・失敗時は None。
+        remaining_transcribe_jobs: 残文字起こし回数。無効時・失敗時は None。
+        period_start: 集計期間の開始日時（ISO8601 UTC 文字列）。失敗時は None。
+        reset_at: リセット日時（翌日 00:00 UTC、ISO8601 文字列）。失敗時は None。
+        retrieved_at: サーバー側での取得時刻（ISO8601 UTC 文字列）。失敗時は None。
+        error: 取得に失敗した場合のエラーメッセージ。成功時は None。
+    """
+
+    daily_token_limit: int | None = None
+    used_tokens: int | None = None
+    remaining_tokens: int | None = None
+    daily_transcribe_job_limit: int | None = None
+    used_transcribe_jobs: int | None = None
+    remaining_transcribe_jobs: int | None = None
+    period_start: str | None = None
+    reset_at: str | None = None
+    retrieved_at: str | None = None
+    error: str | None = None
 
 
 @dataclass

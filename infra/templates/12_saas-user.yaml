@@ -50,10 +50,10 @@ Parameters:
       - "false"
     Description: Whether to enable the usage guard (disables the key when a limit is exceeded)
 
-  MonthlyTokenLimit:
+  DailyTokenLimit:
     Type: Number
     Default: 500000
-    Description: Monthly token limit. Access key is auto-disabled when exceeded.
+    Description: Daily token limit. Access key is auto-disabled when exceeded.
 
   DailyTranscribeJobLimit:
     Type: Number
@@ -103,10 +103,10 @@ Resources:
   # ============================================================
   # IAM ポリシー - Bedrock（推論プロファイル経由のみ許可）
   # ============================================================
-  BedrockPolicy:
-    Type: AWS::IAM::Policy
+  BedrockManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: !Sub "${ProjectName}-${UserName}-bedrock"
+      ManagedPolicyName: !Sub "${ProjectName}-${UserName}-bedrock"
       Users:
         - !Ref AppUser
       PolicyDocument:
@@ -161,11 +161,11 @@ Resources:
   # ============================================================
   # IAM ポリシー - Amazon Transcribe
   # ============================================================
-  TranscribePolicy:
-    Type: AWS::IAM::Policy
+  TranscribeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Condition: ShouldEnableTranscribe
     Properties:
-      PolicyName: !Sub "${ProjectName}-${UserName}-transcribe"
+      ManagedPolicyName: !Sub "${ProjectName}-${UserName}-transcribe"
       Users:
         - !Ref AppUser
       PolicyDocument:
@@ -330,13 +330,16 @@ Resources:
       Principal: sns.amazonaws.com
       SourceArn: !Ref UsageGuardTopic
 
-  # CloudWatch Alarm — Bedrock トークン使用量
+  # CloudWatch Alarm — Bedrock トークン使用量（日次評価窓）
+  # 注: Period を 86400 秒（1 日）とし、日次上限の安全弁とする。
+  #     残量表示に用いる厳密な当日累計は、使用量集約 Lambda (UsageAggregatorFunction) が
+  #     GetMetricData の StartTime を「当日 00:00 UTC」に指定して算出する。
   BedrockInvocationAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: ShouldEnableUsageGuard
     Properties:
       AlarmName: !Sub "${ProjectName}-${UserName}-token-limit"
-      AlarmDescription: !Sub "${UserName} の Bedrock トークン使用量が上限超過"
+      AlarmDescription: !Sub "${UserName} の Bedrock トークン使用量が日次上限を超過"
       Namespace: AWS/Bedrock
       MetricName: InputTokenCount
       Dimensions:
@@ -345,7 +348,7 @@ Resources:
       Statistic: Sum
       Period: 86400
       EvaluationPeriods: 1
-      Threshold: !Ref MonthlyTokenLimit
+      Threshold: !Ref DailyTokenLimit
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
@@ -442,7 +445,10 @@ Resources:
           MetricValue: "1"
           DefaultValue: 0
 
-  # CloudWatch Alarm — 1日あたりの Transcribe ジョブ数
+  # CloudWatch Alarm — 日次あたりの Transcribe ジョブ数（日次評価窓）
+  # 注: Period を 86400 秒（1 日）とし、日次上限の安全弁とする。
+  #     残量表示に用いる厳密な当日累計は、使用量集約 Lambda (UsageAggregatorFunction) が
+  #     GetMetricData の StartTime を「当日 00:00 UTC」に指定して算出する。
   TranscribeJobAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: ShouldEnableTranscribeGuard
@@ -464,6 +470,308 @@ Resources:
           Value: !Ref ProjectName
         - Key: User
           Value: !Ref UserName
+
+  # ============================================================
+  # 使用量集約 API（案B: 集約 API 方式）
+  # API Gateway (AWS_IAM 認可) → Lambda が CloudWatch から当日使用量を集計し、
+  # 上限との差分（残量）を JSON で返す。
+  # 上限値はアプリに配布せず、Lambda 環境変数（CloudFormation パラメータ由来）に閉じる。
+  # 使用量ガード (ShouldEnableUsageGuard) とは独立に常時提供する。
+  # ============================================================
+
+  # 集約 Lambda 実行ロール
+  UsageAggregatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${UserName}-usage-api-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReadUsageMetrics
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # cloudwatch:GetMetricData はリソースレベルの権限制限に非対応のため、
+              # Resource は "*" とする（AWS 仕様上、条件・リソースで絞り込めない）。
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
+
+  # 使用量集約 Lambda
+  UsageAggregatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${UserName}-usage-api"
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt UsageAggregatorRole.Arn
+      Environment:
+        Variables:
+          DAILY_TOKEN_LIMIT: !Ref DailyTokenLimit
+          DAILY_TRANSCRIBE_JOB_LIMIT: !Ref DailyTranscribeJobLimit
+          INFERENCE_PROFILE_ARN: !GetAtt InferenceProfile.InferenceProfileArn
+          METRIC_NAMESPACE: !Sub "${ProjectName}/TranscribeUsage"
+          TRANSCRIBE_METRIC_NAME: !Sub "${UserName}-TranscribeJobCount"
+          ENABLE_TRANSCRIBE: !Ref EnableTranscribe
+      Code:
+        ZipFile: |
+          # 使用量集約 Lambda。
+          # 当日 00:00 UTC 〜 現在の Bedrock 入力トークン数と Transcribe ジョブ数を
+          # CloudWatch GetMetricData で Sum 集計し、上限との差分（残量）を返す。
+          # 注意: 環境変数の一括ダンプ（os.environ / printenv 全出力）は行わない。
+          #       ログには使用量・残量の要約のみを出力する。
+          import json
+          import logging
+          import os
+          from datetime import datetime, timedelta, timezone
+
+          import boto3
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          cloudwatch = boto3.client("cloudwatch")
+
+
+          def _day_start(now):
+              # 当日 00:00 UTC
+              return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+          def _next_day_start(now):
+              # 翌日 00:00 UTC（リセット日時）
+              return _day_start(now) + timedelta(days=1)
+
+
+          def _sum_metric(namespace, metric_name, dimensions, start, end):
+              # 指定メトリクスを当日区間で Sum 集計する。
+              resp = cloudwatch.get_metric_data(
+                  MetricDataQueries=[
+                      {
+                          "Id": "usage",
+                          "MetricStat": {
+                              "Metric": {
+                                  "Namespace": namespace,
+                                  "MetricName": metric_name,
+                                  "Dimensions": dimensions,
+                              },
+                              # 期間全体を 1 データポイントに集約する。
+                              "Period": 86400,
+                              "Stat": "Sum",
+                          },
+                          "ReturnData": True,
+                      }
+                  ],
+                  StartTime=start,
+                  EndTime=end,
+                  ScanBy="TimestampDescending",
+              )
+              values = resp["MetricDataResults"][0].get("Values", [])
+              return sum(values)
+
+
+          def handler(event, context):
+              now = datetime.now(timezone.utc)
+              start = _day_start(now)
+              reset_at = _next_day_start(now)
+
+              token_limit = int(os.environ["DAILY_TOKEN_LIMIT"])
+              inference_profile_arn = os.environ["INFERENCE_PROFILE_ARN"]
+
+              # Bedrock 入力トークン使用量（当日累計）
+              used_tokens = int(
+                  _sum_metric(
+                      "AWS/Bedrock",
+                      "InputTokenCount",
+                      [{"Name": "InferenceProfileArn", "Value": inference_profile_arn}],
+                      start,
+                      end=now,
+                  )
+              )
+              remaining_tokens = max(token_limit - used_tokens, 0)
+
+              # Transcribe ジョブ数（有効時のみ。無効時は各項目 null）
+              enable_transcribe = os.environ.get("ENABLE_TRANSCRIBE", "false") == "true"
+              if enable_transcribe:
+                  job_limit = int(os.environ["DAILY_TRANSCRIBE_JOB_LIMIT"])
+                  used_jobs = int(
+                      _sum_metric(
+                          os.environ["METRIC_NAMESPACE"],
+                          os.environ["TRANSCRIBE_METRIC_NAME"],
+                          [],
+                          start,
+                          end=now,
+                      )
+                  )
+                  remaining_jobs = max(job_limit - used_jobs, 0)
+              else:
+                  job_limit = None
+                  used_jobs = None
+                  remaining_jobs = None
+
+              body = {
+                  "daily_token_limit": token_limit,
+                  "used_tokens": used_tokens,
+                  "remaining_tokens": remaining_tokens,
+                  "daily_transcribe_job_limit": job_limit,
+                  "used_transcribe_jobs": used_jobs,
+                  "remaining_transcribe_jobs": remaining_jobs,
+                  "period_start": start.isoformat(),
+                  "reset_at": reset_at.isoformat(),
+                  "retrieved_at": now.isoformat(),
+              }
+
+              # 要約のみログ出力（認証情報・環境変数全体は出力しない）
+              logger.info(
+                  "usage summary: tokens used=%s remaining=%s, jobs used=%s remaining=%s",
+                  used_tokens, remaining_tokens, used_jobs, remaining_jobs,
+              )
+
+              return {
+                  "statusCode": 200,
+                  "headers": {"Content-Type": "application/json"},
+                  "body": json.dumps(body),
+              }
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
+
+  # 使用量集約 API（REST API, IAM 認可）
+  UsageApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${ProjectName}-${UserName}-usage-api"
+      Description: !Sub "${UserName} の使用量（残トークン・残文字起こし回数）を返す API"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # /usage リソース
+  UsageApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UsageApi
+      ParentId: !GetAtt UsageApi.RootResourceId
+      PathPart: usage
+
+  # GET /usage（IAM 認可 + Lambda プロキシ統合）
+  # 認可方式は AWS_IAM（SigV4 署名）である。誰でも叩ける公開 API ではなく、
+  # 呼び出し元は IAM 資格情報で署名する必要がある。アプリ IAM ユーザー（AppUser）には
+  # 後述の UsageApiInvokeManagedPolicy で execute-api:Invoke を当該 API の prod/GET/usage に
+  # 限定して付与しており、他リソース・他メソッド・他ステージへの呼び出しは許可されない。
+  UsageApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UsageApi
+      ResourceId: !Ref UsageApiResource
+      HttpMethod: GET
+      # AWS_IAM 認可（SigV4）。維持必須。無認可（NONE）にしないこと。
+      AuthorizationType: AWS_IAM
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UsageAggregatorFunction.Arn}/invocations"
+
+  # API デプロイ
+  UsageApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: UsageApiMethod
+    Properties:
+      RestApiId: !Ref UsageApi
+      Description: 使用量 API のデプロイ
+
+  # 使用量 API アクセスログ用の CloudWatch Logs ロググループ
+  # 命名は既存の TranscribeTrailLogGroup（/aws/cloudtrail/${ProjectName}-${UserName}）の
+  # スタイルに倣う。タグも既存に合わせる。
+  # 保持期間はユーザー要望により 90 日（約 3 か月）とする
+  # （CloudWatch Logs の RetentionInDays 許可値のうち 3 か月相当は 90）。
+  UsageApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${ProjectName}-${UserName}-usage-api"
+      RetentionInDays: 90
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
+
+  # prod ステージ
+  # セキュリティ強化:
+  #  - スロットリング（レート制限）: 更新ボタンの連打や誤実装による過剰コール・コスト増を
+  #    抑制するため、全メソッドに ThrottlingRateLimit=5 req/s、ThrottlingBurstLimit=10 を設定。
+  #  - アクセスログ: 上記ロググループへ JSON 形式で出力。requestId / ip / caller / user /
+  #    requestTime / httpMethod / resourcePath / status / protocol / responseLength のみを含め、
+  #    認証情報・Authorization ヘッダ・リクエスト/レスポンス本文は一切ログに残さない。
+  #  - 実行ログ: LoggingLevel=INFO、MetricsEnabled=true。ただし DataTraceEnabled は false 厳守
+  #    （true にするとリクエスト/レスポンス本文がログに出力されるため）。
+  # 注: API Gateway がアカウントレベルで CloudWatch Logs へ書き込むには、リージョン/アカウント
+  #     単位で AWS::ApiGateway::Account（CloudWatchRole）の設定が必要。これはグローバル設定であり
+  #     ユーザーごとスタックに置くと重複・上書き競合するため、共有スタック
+  #     （12_saas-shared.yaml）側に集約している。詳細は infra/README.md を参照。
+  UsageApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref UsageApi
+      DeploymentId: !Ref UsageApiDeployment
+      StageName: prod
+      # アクセスログ設定（本文・認証情報を含めない $context 変数のみ）
+      AccessLogSetting:
+        DestinationArn: !GetAtt UsageApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","caller":"$context.identity.caller","user":"$context.identity.user","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}'
+      # 実行ログ・メトリクス・スロットリング（全メソッド対象）
+      MethodSettings:
+        - HttpMethod: "*"
+          ResourcePath: "/*"
+          # レート制限（過剰コール・コスト増の抑制）
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
+          # 実行ログ（本文は残さない）
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+          MetricsEnabled: true
+
+  # API Gateway から Lambda を呼び出す許可
+  UsageApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UsageAggregatorFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UsageApi}/*/GET/usage"
+
+  # アプリ IAM ユーザーへ execute-api:Invoke を付与
+  # （当該 API の prod ステージ・GET /usage リソースに限定）
+  UsageApiInvokeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${UserName}-usage-api-invoke"
+      Users:
+        - !Ref AppUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowInvokeUsageApi
+            Effect: Allow
+            Action:
+              - execute-api:Invoke
+            Resource:
+              - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UsageApi}/prod/GET/usage"
 
 Outputs:
   InferenceProfileArn:
@@ -493,6 +801,10 @@ Outputs:
     Condition: ShouldCreateAccessKey
     Value: !Ref AppUserSecret
 
+  UsageApiEndpoint:
+    Description: 使用量 API のエンドポイント URL（GET でアクセス。IAM/SigV4 認証必須）
+    Value: !Sub "https://${UsageApi}.execute-api.${AWS::Region}.amazonaws.com/prod/usage"
+
   AppConfigSummary:
     Description: Application configuration summary
     Value: !Sub |
@@ -503,7 +815,12 @@ Outputs:
       [Transcribe]
         - S3 bucket: ${TranscribeBucketName}
         - Region: ${AWS::Region}
+      [Usage API]
+        - Endpoint: https://${UsageApi}.execute-api.${AWS::Region}.amazonaws.com/prod/usage
+        - Auth: IAM (SigV4)
+        - Bedrock daily token limit: ${DailyTokenLimit}
+        - Transcribe daily job limit: ${DailyTranscribeJobLimit}
       [Usage guard]
-        - Bedrock monthly token limit: ${MonthlyTokenLimit}
+        - Bedrock daily token limit: ${DailyTokenLimit}
         - Transcribe daily job limit: ${DailyTranscribeJobLimit}
         - On breach: access key auto-disabled
