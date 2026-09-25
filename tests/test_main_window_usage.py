@@ -44,9 +44,8 @@ def _make_window_stub(aws_settings=None) -> MainWindow:
     """tkinter を生成せずに MainWindow の残量表示に必要な最小状態を組み立てる."""
     win = object.__new__(MainWindow)
     win._aws_settings = aws_settings
-    win._usage_tokens_var = _FakeVar()
-    win._usage_jobs_var = _FakeVar()
-    win._usage_reset_var = _FakeVar()
+    # 残存容量はメイン下部のステータス欄に 1 行で表示する（単一の StringVar）。
+    win._usage_status_var = _FakeVar()
 
     # root.after を即時実行するスタブに差し替える。
     class _FakeRoot:
@@ -72,18 +71,18 @@ class TestApplyUsage:
         )
         win._apply_usage(usage)
 
-        assert "498500" in win._usage_tokens_var.get()
-        assert "500000" in win._usage_tokens_var.get()
-        assert "7" in win._usage_jobs_var.get()
-        assert "2026-09-25" in win._usage_reset_var.get()
+        status = win._usage_status_var.get()
+        assert "498500" in status
+        assert "500000" in status
+        assert "7" in status
+        assert "2026-09-25" in status
 
     def test_error_shows_fallback(self) -> None:
         """error 付き UsageInfo は『取得できませんでした』表示になる."""
         win = _make_window_stub()
         win._apply_usage(UsageInfo(error="失敗"))
 
-        assert "取得できませんでした" in win._usage_tokens_var.get()
-        assert "取得できませんでした" in win._usage_jobs_var.get()
+        assert "取得できませんでした" in win._usage_status_var.get()
 
     def test_transcribe_disabled_shows_out_of_scope(self) -> None:
         """Transcribe 無効ユーザーは残文字起こしが『対象外』になる."""
@@ -95,7 +94,7 @@ class TestApplyUsage:
         )
         win._apply_usage(usage)
 
-        assert "対象外" in win._usage_jobs_var.get()
+        assert "対象外" in win._usage_status_var.get()
 
 
 class TestRefreshUsage:
@@ -106,15 +105,14 @@ class TestRefreshUsage:
         win = _make_window_stub(aws_settings=AwsSettings(usage_api_endpoint=""))
         win.refresh_usage()
 
-        assert "未設定" in win._usage_tokens_var.get()
-        assert "未設定" in win._usage_jobs_var.get()
+        assert "未設定" in win._usage_status_var.get()
 
     def test_none_aws_settings_shows_not_configured(self) -> None:
         """aws_settings が None のときも未設定表示."""
         win = _make_window_stub(aws_settings=None)
         win.refresh_usage()
 
-        assert "未設定" in win._usage_tokens_var.get()
+        assert "未設定" in win._usage_status_var.get()
 
     def test_on_memo_saved_triggers_refresh_usage(self, mocker) -> None:
         """文字起こし・LLM 要約完了時（_on_memo_saved）に refresh_usage が呼ばれる.
@@ -158,8 +156,8 @@ class TestRefreshUsage:
         import time
 
         for _ in range(50):
-            if "498500" in win._usage_tokens_var.get():
+            if "498500" in win._usage_status_var.get():
                 break
             time.sleep(0.02)
 
-        assert "498500" in win._usage_tokens_var.get()
+        assert "498500" in win._usage_status_var.get()

@@ -88,10 +88,8 @@ class MainWindow:
         # ステータス変数
         self._status_var = tk.StringVar(value="モデル読み込み中...")
 
-        # 残存容量表示用変数
-        self._usage_tokens_var = tk.StringVar(value="残トークン: -")
-        self._usage_jobs_var = tk.StringVar(value="残文字起こし: -")
-        self._usage_reset_var = tk.StringVar(value="リセット: -")
+        # 残存容量表示用変数（メイン下部のステータス欄に 1 行で表示する）
+        self._usage_status_var = tk.StringVar(value="残存容量: -")
 
         # 初期化完了フラグ
         self._ready = False
@@ -127,14 +125,22 @@ class MainWindow:
     def _build_ui(self) -> None:
         """UI コンポーネントを構築・配置する."""
         # --- ステータスバー（先に pack して下部スペースを確保）---
-        status_bar = ttk.Label(
-            self._root,
-            textvariable=self._status_var,
-            relief=tk.SUNKEN,
-            anchor=tk.W,
-            padding=(4, 2),
-        )
+        # 左: 一般ステータス（モデル読み込み等）／右: 残存容量（SaaS 利用状況）
+        status_bar = ttk.Frame(self._root, relief=tk.SUNKEN, padding=(4, 2))
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        ttk.Label(
+            status_bar,
+            textvariable=self._status_var,
+            anchor=tk.W,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 残存容量表示（右寄せ）。使用量 API 未設定時は「未設定」表示になる。
+        ttk.Label(
+            status_bar,
+            textvariable=self._usage_status_var,
+            anchor=tk.E,
+        ).pack(side=tk.RIGHT, padx=(12, 0))
 
         # メインフレーム
         main_frame = ttk.Frame(self._root, padding=8)
@@ -194,33 +200,9 @@ class MainWindow:
         )
         self._stop_btn.pack(side=tk.LEFT)
 
-        # --- 残存容量表示パネル（ADR-006 案B）---
-        usage_frame = ttk.LabelFrame(record_tab, text="残存容量（SaaS 利用状況）", padding=4)
-        usage_frame.pack(fill=tk.X, pady=(0, 4))
-
-        usage_row = ttk.Frame(usage_frame)
-        usage_row.pack(fill=tk.X)
-
-        ttk.Label(usage_row, textvariable=self._usage_tokens_var).pack(
-            side=tk.LEFT, padx=(0, 12)
-        )
-        ttk.Label(usage_row, textvariable=self._usage_jobs_var).pack(
-            side=tk.LEFT, padx=(0, 12)
-        )
-        ttk.Label(usage_row, textvariable=self._usage_reset_var).pack(
-            side=tk.LEFT, padx=(0, 12)
-        )
-
-        # 「残量更新」ボタンは補助的な手動更新手段として残す。
-        # 残量の自動更新は「アプリ起動時／文字起こし・LLM 要約完了時」に限定するが、
-        # ユーザー要求は自動更新のタイミングに関するものであり、手動更新ボタンの
-        # 削除は明示されていない。任意のタイミングで最新値を確認できる利便性のため残す。
-        self._usage_refresh_btn = ttk.Button(
-            usage_row,
-            text="残量更新",
-            command=self.refresh_usage,
-        )
-        self._usage_refresh_btn.pack(side=tk.RIGHT)
+        # 残存容量は録画タブではなく、メイン下部のステータス欄に表示する
+        # （手動更新ボタンは廃止。更新はアプリ起動時／設定変更時／文字起こし・
+        #  LLM 要約完了時に自動で行う）。
 
         # --- MemoListView ---
         from screen_audio_recorder.gui.memo_list_view import MemoListView
@@ -232,6 +214,8 @@ class MainWindow:
             transcriber=getattr(self._recorder_controller, "_transcriber", None),
             root=self._root,
             raw_transcript_store=getattr(self._recorder_controller, "_raw_transcript_store", None),
+            # 再処理・再文字起こし完了時に残存容量を再取得する。
+            on_processing_done=self.refresh_usage,
         )
         self._memo_list_view.frame.pack(fill=tk.BOTH, expand=True)
 
@@ -311,14 +295,10 @@ class MainWindow:
         """
         if self._aws_settings is None or not (self._aws_settings.usage_api_endpoint or "").strip():
             # 未設定時はフォールバック表示にとどめる。
-            self._usage_tokens_var.set("残トークン: 未設定")
-            self._usage_jobs_var.set("残文字起こし: 未設定")
-            self._usage_reset_var.set("リセット: -")
+            self._usage_status_var.set("残存容量: 未設定")
             return
 
-        self._usage_tokens_var.set("残トークン: 取得中...")
-        self._usage_jobs_var.set("残文字起こし: 取得中...")
-        self._usage_reset_var.set("リセット: 取得中...")
+        self._usage_status_var.set("残存容量: 取得中...")
 
         aws_settings = self._aws_settings
 
@@ -341,27 +321,28 @@ class MainWindow:
             usage: :class:`~screen_audio_recorder.models.UsageInfo`。
         """
         if usage.error is not None:
-            self._usage_tokens_var.set("残トークン: 取得できませんでした")
-            self._usage_jobs_var.set("残文字起こし: 取得できませんでした")
-            self._usage_reset_var.set("リセット: -")
+            self._usage_status_var.set("残存容量: 取得できませんでした")
             return
 
+        # 残トークン
         if usage.remaining_tokens is not None:
-            self._usage_tokens_var.set(
-                f"残トークン: {usage.remaining_tokens} / 日次上限 {usage.daily_token_limit}"
-            )
+            tokens_part = f"残トークン {usage.remaining_tokens}/{usage.daily_token_limit}"
         else:
-            self._usage_tokens_var.set("残トークン: -")
+            tokens_part = "残トークン -"
 
+        # 残文字起こし回数（Transcribe 無効ユーザーは対象外）
         if usage.remaining_transcribe_jobs is not None:
-            self._usage_jobs_var.set(
-                f"残文字起こし: {usage.remaining_transcribe_jobs} / 日次上限 {usage.daily_transcribe_job_limit}"
+            jobs_part = (
+                f"残文字起こし {usage.remaining_transcribe_jobs}/{usage.daily_transcribe_job_limit}"
             )
         else:
-            # Transcribe 無効ユーザーは対象外。
-            self._usage_jobs_var.set("残文字起こし: 対象外")
+            jobs_part = "残文字起こし 対象外"
 
-        self._usage_reset_var.set(f"リセット: {usage.reset_at or '-'}")
+        reset_part = f"リセット {usage.reset_at or '-'}"
+
+        self._usage_status_var.set(
+            f"残存容量: {tokens_part} | {jobs_part} | {reset_part}"
+        )
 
     # ------------------------------------------------------------------
     # マイクデバイス読み込み
