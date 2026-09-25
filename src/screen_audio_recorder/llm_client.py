@@ -15,10 +15,12 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 from screen_audio_recorder.models import AwsSettings, LlmBackend, LlmSettings
 
@@ -87,28 +89,87 @@ class LlmClient:
         _endpoint: 推論に使用する API エンドポイント URL
     """
 
-    def __init__(self, settings: LlmSettings, aws_settings: AwsSettings | None = None) -> None:
+    def __init__(
+        self,
+        settings: LlmSettings,
+        aws_settings: AwsSettings | None = None,
+        defer_init: bool = False,
+    ) -> None:
+        """LlmClient を初期化する.
+
+        Args:
+            settings: LLM 設定。
+            aws_settings: AWS 接続設定。
+            defer_init: True の場合、コンストラクタでの同期初期化を行わず未初期化
+                状態で構築する。呼び出し側は ``initialize_async()`` または
+                ``reload()`` で後から初期化する。起動時に llama-server の起動待ち
+                （最大 ``_SERVER_START_TIMEOUT`` 秒）でメインスレッドがブロックする
+                のを避けるために使用する（ADR-005 決定事項 1）。
+        """
         self._settings = settings
         self._aws_settings = aws_settings or AwsSettings()
         self._server_process: subprocess.Popen | None = None
         self._available = False
         self._endpoint: str = ""
         self._bedrock_client = None
-        self._initialize()
+        self._init_lock = threading.Lock()
+        if not defer_init:
+            self._initialize()
+
+    def initialize_async(
+        self,
+        callback: Callable[[], None] | None = None,
+        root=None,
+    ) -> None:
+        """バックグラウンドスレッドでクライアントを初期化する.
+
+        ローカルバックエンドでは llama-server の起動待ちに最大
+        ``_SERVER_START_TIMEOUT`` 秒かかるため、メインスレッド（GUI）を
+        ブロックしないよう daemon スレッドで ``_initialize()`` を実行する。
+        完了後、``root`` が指定されていれば ``root.after_idle`` 経由で、
+        なければ直接 ``callback`` を呼び出す（Whisper モデルの非同期ロードと
+        同じパターン）。
+
+        Args:
+            callback: 初期化完了時に呼ばれるコールバック（引数なし）。
+            root: tkinter ルートウィンドウ。指定時は after_idle で callback を呼ぶ。
+        """
+        def _worker() -> None:
+            try:
+                self._initialize()
+            except Exception:
+                logger.exception("LLM の非同期初期化に失敗しました。")
+            if callback is not None:
+                if root is not None:
+                    try:
+                        root.after_idle(callback)
+                    except Exception:
+                        # ウィンドウ破棄後などは無視
+                        pass
+                else:
+                    callback()
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
 
     def _initialize(self) -> None:
-        """設定に基づいてクライアントを初期化する."""
-        self._stop_server()
-        self._available = False
-        self._endpoint = ""
-        self._bedrock_client = None
+        """設定に基づいてクライアントを初期化する.
 
-        if self._settings.backend == LlmBackend.LOCAL:
-            self._init_local()
-        elif self._settings.backend == LlmBackend.AWS_BEDROCK:
-            self._init_bedrock()
-        else:
-            self._init_api()
+        非同期初期化スレッドと GUI からの ``reload()`` が同時に走っても
+        llama-server プロセスの起動・停止が競合しないよう、ロックで直列化する。
+        """
+        with self._init_lock:
+            self._stop_server()
+            self._available = False
+            self._endpoint = ""
+            self._bedrock_client = None
+
+            if self._settings.backend == LlmBackend.LOCAL:
+                self._init_local()
+            elif self._settings.backend == LlmBackend.AWS_BEDROCK:
+                self._init_bedrock()
+            else:
+                self._init_api()
 
     def _init_local(self) -> None:
         """ローカル llama-server を起動する."""

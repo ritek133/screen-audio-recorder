@@ -69,9 +69,10 @@ class TestTranscriberInit:
         mock_model_instance = _make_mock_whisper_model()
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -84,7 +85,10 @@ class TestTranscriberInit:
 
     def test_init_faster_whisper_unavailable_disabled(self) -> None:
         """faster-whisper が利用不可の場合、enabled=False になる."""
-        with patch("screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", False):
+        with patch(
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=False,
+        ):
             from screen_audio_recorder.transcriber import Transcriber
 
             transcriber = Transcriber()
@@ -94,9 +98,10 @@ class TestTranscriberInit:
     def test_init_model_load_failure_disabled(self, tmp_path: Path) -> None:
         """モデルロードに失敗した場合、enabled=False になる."""
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             side_effect=RuntimeError("モデルロード失敗"),
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -112,9 +117,10 @@ class TestTranscriberInit:
         mock_notifier = MagicMock()
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             side_effect=RuntimeError("ダウンロード失敗"),
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -129,7 +135,10 @@ class TestTranscriberInit:
         """faster-whisper が利用不可の場合、error_notifier.show_error() が呼ばれる."""
         mock_notifier = MagicMock()
 
-        with patch("screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", False):
+        with patch(
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=False,
+        ):
             from screen_audio_recorder.transcriber import Transcriber
 
             transcriber = Transcriber(error_notifier=mock_notifier)
@@ -142,9 +151,10 @@ class TestTranscriberInit:
         mock_model_instance = _make_mock_whisper_model()
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", cache_dir
@@ -169,9 +179,10 @@ class TestTranscriberTranscribe:
         mock_model_instance = _make_mock_whisper_model(segments=segments, duration=duration)
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -241,7 +252,10 @@ class TestTranscriberTranscribe:
 
     def test_transcribe_disabled_returns_empty_text(self) -> None:
         """文字起こし機能が無効の場合、空テキストを返す."""
-        with patch("screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", False):
+        with patch(
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=False,
+        ):
             from screen_audio_recorder.transcriber import Transcriber
 
             transcriber = Transcriber()
@@ -284,9 +298,10 @@ class TestTranscriberFailure:
         mock_model_instance.transcribe.side_effect = RuntimeError("文字起こし失敗")
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -312,9 +327,10 @@ class TestTranscriberFailure:
         mock_memo_store = MagicMock()
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -341,9 +357,10 @@ class TestTranscriberFailure:
         mock_notifier = MagicMock()
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -367,9 +384,10 @@ class TestTranscriberFailure:
         mock_model_instance.transcribe.side_effect = RuntimeError("文字起こし失敗")
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -400,9 +418,10 @@ class TestTranscriberAsync:
         mock_model_instance = _make_mock_whisper_model(segments=segments, duration=duration)
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -519,9 +538,10 @@ class TestTranscriberAsync:
         mock_model_instance.transcribe.side_effect = mock_transcribe
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -563,9 +583,10 @@ class TestTranscriberNoNetworkAccess:
         mock_model_instance = _make_mock_whisper_model(segments=segments)
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -620,9 +641,10 @@ class TestTranscriberNoNetworkAccess:
         mock_model_instance = _make_mock_whisper_model(segments=segments)
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"
@@ -705,9 +727,10 @@ class TestTranscriberNoNetworkAccess:
                 pass
 
         with patch(
-            "screen_audio_recorder.transcriber._FASTER_WHISPER_AVAILABLE", True
+            "screen_audio_recorder.transcriber._faster_whisper_available",
+            return_value=True,
         ), patch(
-            "screen_audio_recorder.transcriber._WhisperModel",
+            "faster_whisper.WhisperModel",
             return_value=mock_model_instance,
         ), patch(
             "screen_audio_recorder.transcriber._MODEL_CACHE_DIR", tmp_path / "models"

@@ -131,6 +131,7 @@ def main() -> None:
     from screen_audio_recorder.llm_client import LlmClient
     from screen_audio_recorder.llm_settings_store import load_all_settings as _load_all_settings, load_settings as load_llm_settings
     from screen_audio_recorder.memo_store import MemoStore
+    from screen_audio_recorder.models import TranscriberBackend
     from screen_audio_recorder.raw_transcript_store import RawTranscriptStore
     from screen_audio_recorder.recorder_controller import RecorderController
     from screen_audio_recorder.screen_capture import ScreenCapture
@@ -172,26 +173,17 @@ def main() -> None:
     theme_generator = ThemeGeneratorService()
 
     # LLM コンポーネントを初期化
-    llm_client = LlmClient(llm_settings, aws_settings)
+    # ローカルバックエンドでは llama-server の起動待ちに最大 120 秒かかるため、
+    # ここでは同期初期化せず（defer_init=True）、mainloop 開始前に
+    # initialize_async() でバックグラウンド初期化する（ADR-005 決定事項 1）。
+    # 初期化完了までは available=False のため、TextPostProcessor は janome
+    # フォールバックで動作を継続する。
+    llm_client = LlmClient(llm_settings, aws_settings, defer_init=True)
     text_post_processor = TextPostProcessor(
         llm_client=llm_client,
         theme_generator_fallback=theme_generator,
         settings=llm_settings,
     )
-
-    # LLM 状態をログに出力
-    if llm_client.available:
-        logger.info(
-            "LLM 有効: バックエンド=%s",
-            llm_settings.backend.value,
-        )
-    else:
-        logger.warning(
-            "LLM 無効: バックエンド=%s。"
-            "LLM 設定タブでモデルの設定を行ってください。"
-            "設定が完了するまで janome フォールバックで動作します。",
-            llm_settings.backend.value,
-        )
 
     # LLM 設定変更時のコールバック
     def on_llm_settings_changed(new_settings, new_aws_settings=None):
@@ -241,13 +233,40 @@ def main() -> None:
 
     logger.info("アプリケーションの初期化が完了しました。")
 
+    # LLM をバックグラウンドで初期化開始（ADR-005 決定事項 1）
+    # ローカル要約構成では llama-server の起動待ちが発生するが、mainloop を
+    # ブロックしないよう daemon スレッドで実行する。完了後に状態をログ出力する。
+    def _on_llm_initialized():
+        if llm_client.available:
+            logger.info("LLM 有効: バックエンド=%s", llm_settings.backend.value)
+        else:
+            logger.warning(
+                "LLM 無効: バックエンド=%s。"
+                "LLM 設定タブでモデルの設定を行ってください。"
+                "設定が完了するまで janome フォールバックで動作します。",
+                llm_settings.backend.value,
+            )
+
+    llm_client.initialize_async(callback=_on_llm_initialized, root=root)
+
     # Whisper モデルをバックグラウンドでロード開始
-    # 完了後に MainWindow の録画ボタンを有効化する
+    # 完了後に MainWindow の録画ボタンを有効化する。
+    # 文字起こしがローカル（faster-whisper）のときのみモデルをロードする。
+    # vLLM / Amazon Transcribe 構成では Whisper モデルも faster-whisper も不要のため
+    # ロード経路に入らない（ADR-005 決定事項 0）。
     def _on_model_loaded():
         main_window.set_ready()
         logger.info("Whisper モデルのバックグラウンドロードが完了しました。")
 
-    transcriber.load_model_async(callback=_on_model_loaded, root=root)
+    if transcriber.backend == TranscriberBackend.LOCAL:
+        transcriber.load_model_async(callback=_on_model_loaded, root=root)
+    else:
+        logger.info(
+            "文字起こしバックエンド=%s のため Whisper モデルのロードをスキップします。",
+            transcriber.backend.value,
+        )
+        # ローカルモデル不要のバックエンドでは即座に操作可能にする
+        main_window.set_ready()
 
     # tkinter イベントループを開始
     try:

@@ -14,6 +14,24 @@ import importlib
 
 block_cipher = None
 
+# UPX 圧縮の採否（ADR-005 決定事項 5）
+#
+# UPX は配布サイズを削減する一方、起動時に実行ファイルを展開するため、
+# 環境によっては起動がわずかに遅くなる場合がある。ADR-005 では起動時間と
+# 配布サイズのトレードオフを実測して採否を決める方針としている。
+#
+# 実測手順:
+#   1. 環境変数 SAR_USE_UPX=0 を設定して `pyinstaller screen_audio_recorder.spec` を実行し、
+#      UPX 無効ビルドを作成する（デフォルトは有効）。
+#   2. UPX 有効／無効それぞれで「プロセス開始〜ウィンドウ表示／操作可能」までの
+#      起動時間と dist フォルダサイズを計測して比較する。
+#   3. 結果に基づき、この既定値（下記 _USE_UPX）を確定する。
+#
+# 現時点では従来どおり UPX 有効を既定とし、実測は環境変数で切り替え可能にする。
+import os
+
+_USE_UPX = os.environ.get("SAR_USE_UPX", "1") != "0"
+
 # janome の辞書データ（sysdic）のパスを取得
 _janome_datas = []
 try:
@@ -121,7 +139,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=_USE_UPX,           # ADR-005 決定事項5: 実測で採否を決める（SAR_USE_UPX=0 で無効化）
     console=False,          # GUI アプリのためコンソールウィンドウを非表示
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -140,7 +158,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=_USE_UPX,           # ADR-005 決定事項5: EXE と同じ設定に揃える
     upx_exclude=[],
     # --onedir モード: dist/screen-audio-recorder/ に展開
     name="screen-audio-recorder",

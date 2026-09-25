@@ -30,23 +30,29 @@ from screen_audio_recorder.models import (
 if TYPE_CHECKING:
     pass
 
-# faster-whisper は try/except でインポートし、利用不可の場合は None にフォールバック
-try:
-    from faster_whisper import WhisperModel as _WhisperModel
+import importlib.util
 
-    _FASTER_WHISPER_AVAILABLE = True
-except ImportError:
-    _WhisperModel = None  # type: ignore[assignment,misc]
-    _FASTER_WHISPER_AVAILABLE = False
 
-# boto3 は try/except でインポート（AWS 利用時のみ必要）
-try:
-    import boto3
+def _faster_whisper_available() -> bool:
+    """faster-whisper が利用可能かを import せずに確認する.
 
-    _BOTO3_AVAILABLE = True
-except ImportError:
-    boto3 = None  # type: ignore[assignment]
-    _BOTO3_AVAILABLE = False
+    起動高速化（ADR-005 決定事項 2）のため、``faster_whisper``（および間接的な
+    CTranslate2）はローカル文字起こしを実際に使うときだけ import する。ここでは
+    ``importlib.util.find_spec`` で存在確認のみ行い、import コストを回避する。
+    """
+    try:
+        return importlib.util.find_spec("faster_whisper") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _boto3_available() -> bool:
+    """boto3 が利用可能かを import せずに確認する（AWS 利用時のみ遅延 import）."""
+    try:
+        return importlib.util.find_spec("boto3") is not None
+    except (ImportError, ValueError):
+        return False
+
 
 logger = logging.getLogger("screen_audio_recorder")
 
@@ -117,7 +123,7 @@ class Transcriber:
 
     def _init_local(self, lazy_load: bool) -> None:
         """ローカル faster-whisper バックエンドを初期化する."""
-        if not _FASTER_WHISPER_AVAILABLE:
+        if not _faster_whisper_available():
             logger.warning("faster-whisper が利用不可のため、文字起こし機能を無効化します。")
             if self._error_notifier is not None:
                 self._error_notifier.show_error(
@@ -151,7 +157,7 @@ class Transcriber:
 
     def _init_aws_transcribe(self) -> None:
         """Amazon Transcribe バックエンドを初期化する."""
-        if not _BOTO3_AVAILABLE:
+        if not _boto3_available():
             logger.warning("boto3 が利用不可のため、Amazon Transcribe を使用できません。")
             if self._error_notifier is not None:
                 self._error_notifier.show_error(
@@ -172,15 +178,32 @@ class Transcriber:
         """文字起こし機能が有効かどうかを返す."""
         return self._enabled
 
+    @property
+    def backend(self) -> TranscriberBackend:
+        """現在の文字起こしバックエンドを返す.
+
+        呼び出し側が「ローカル（faster-whisper）以外では Whisper モデルの
+        ロードを行わない」ことを明示的に判定するために公開する
+        （ADR-005 決定事項 0）。
+        """
+        return self._transcriber_settings.backend
+
     def _load_model(self) -> None:
-        """Whisper モデルを同期的にロードする."""
+        """Whisper モデルを同期的にロードする.
+
+        ``faster_whisper``（CTranslate2 を伴う重い import）は、この実ロード時点で
+        遅延 import する（ADR-005 決定事項 2）。呼び出しはバックグラウンドスレッドの
+        ``load_model_async`` 経由であり、起動時のメインスレッドをブロックしない。
+        """
         try:
+            from faster_whisper import WhisperModel
+
             logger.info(
                 "Whisper モデル '%s' をロード中（キャッシュ: %s）...",
                 self._model_size,
                 _MODEL_CACHE_DIR,
             )
-            self._model = _WhisperModel(
+            self._model = WhisperModel(
                 self._model_size,
                 device="cpu",
                 compute_type="int8",

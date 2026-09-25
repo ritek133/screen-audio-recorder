@@ -9,6 +9,7 @@ tkinter を使用して録画開始・停止ボタン、モード選択、
 from __future__ import annotations
 
 import logging
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
@@ -79,6 +80,8 @@ class MainWindow:
 
         # マイクデバイス変数
         self._mic_var = tk.StringVar()
+        # マイクデバイス一覧（非同期列挙の完了までは空）
+        self._mic_devices: list = []
 
         # ステータス変数
         self._status_var = tk.StringVar(value="モデル読み込み中...")
@@ -194,43 +197,90 @@ class MainWindow:
         )
         self._memo_list_view.frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- LLM 設定タブ ---
+        # --- 設定系タブは遅延構築する（ADR-005 決定事項 4）---
+        # 設定系タブ（LLM 設定 / 詳細設定 / メモ出力 / About）は構築時に設定 JSON
+        # 読み込み等の初回コストが発生する。起動を最優先で表示するため、ここでは
+        # 空のプレースホルダ Frame だけを Notebook に登録し、実体はタブが初めて
+        # 選択されたときに構築する（<<NotebookTabChanged>> を利用）。
+        # 録画タブとメモ一覧のみ起動時に構築済み。
+        self._llm_settings_tab = None
+        self._advanced_settings_tab = None
+        self._memo_export_settings_tab = None
+        self._about_tab = None
+
+        # タブの widget パス文字列 -> (プレースホルダ Frame, ビルダー関数) の対応表
+        # notebook.select() が返すタブのパス文字列をキーにする。
+        self._lazy_tab_builders: dict = {}
+
+        def _register_lazy_tab(text: str, builder) -> None:
+            placeholder = ttk.Frame(self._notebook)
+            self._notebook.add(placeholder, text=text)
+            self._lazy_tab_builders[str(placeholder)] = (placeholder, builder)
+
+        _register_lazy_tab("LLM 設定", self._build_llm_settings_tab)
+        _register_lazy_tab("詳細設定", self._build_advanced_settings_tab)
+        if self._export_manager is not None:
+            _register_lazy_tab("メモ出力", self._build_memo_export_settings_tab)
+        _register_lazy_tab("このアプリについて", self._build_about_tab)
+
+        # タブ切り替え時に、未構築のタブがあれば構築する
+        self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    def _on_tab_changed(self, event=None) -> None:
+        """タブ選択変更時に、選択タブが未構築なら遅延構築する（ADR-005 決定事項 4）."""
+        try:
+            current = self._notebook.select()
+        except tk.TclError:
+            return
+        entry = self._lazy_tab_builders.pop(current, None)
+        if entry is None:
+            return
+        placeholder, builder = entry
+        try:
+            builder(placeholder)
+        except Exception:
+            logger.exception("設定タブの遅延構築に失敗しました。")
+
+    def _build_llm_settings_tab(self, parent: ttk.Frame) -> None:
+        """LLM 設定タブを構築する（初回選択時）."""
         from screen_audio_recorder.gui.llm_settings_tab import LlmSettingsTab
 
         self._llm_settings_tab = LlmSettingsTab(
-            self._notebook,
+            parent,
             on_settings_changed=self._on_llm_settings_changed_internal,
         )
-        self._notebook.add(self._llm_settings_tab.frame, text="LLM 設定")
+        self._llm_settings_tab.frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- 詳細設定タブ ---
+    def _build_advanced_settings_tab(self, parent: ttk.Frame) -> None:
+        """詳細設定タブを構築する（初回選択時）."""
         from screen_audio_recorder.gui.advanced_settings_tab import AdvancedSettingsTab
 
-        self._advanced_settings_tab = AdvancedSettingsTab(self._notebook)
-        self._notebook.add(self._advanced_settings_tab.frame, text="詳細設定")
+        self._advanced_settings_tab = AdvancedSettingsTab(parent)
+        self._advanced_settings_tab.frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- メモ出力タブ（エクスポート設定）---
-        if self._export_manager is not None:
-            from screen_audio_recorder.gui.memo_export_settings_tab import (
-                MemoExportSettingsTab,
-            )
+    def _build_memo_export_settings_tab(self, parent: ttk.Frame) -> None:
+        """メモ出力（エクスポート設定）タブを構築する（初回選択時）."""
+        from screen_audio_recorder.gui.memo_export_settings_tab import (
+            MemoExportSettingsTab,
+        )
 
-            self._memo_export_settings_tab = MemoExportSettingsTab(
-                self._notebook,
-                on_settings_changed=self._export_manager.update_settings,
-                on_export_now=self._export_manager.export_now,
-            )
-            self._notebook.add(self._memo_export_settings_tab.frame, text="メモ出力")
+        self._memo_export_settings_tab = MemoExportSettingsTab(
+            parent,
+            on_settings_changed=self._export_manager.update_settings,
+            on_export_now=self._export_manager.export_now,
+        )
+        self._memo_export_settings_tab.frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- バージョン情報タブ ---
+    def _build_about_tab(self, parent: ttk.Frame) -> None:
+        """バージョン情報タブを構築する（初回選択時）."""
         from screen_audio_recorder.gui.about_tab import AboutTab
 
         self._about_tab = AboutTab(
-            self._notebook,
+            parent,
             updater=self._updater,
             is_recording=lambda: self._recorder_controller.is_recording,
         )
-        self._notebook.add(self._about_tab.frame, text="このアプリについて")
+        self._about_tab.frame.pack(fill=tk.BOTH, expand=True)
 
     def _on_llm_settings_changed_internal(self, settings: LlmSettings, aws_settings: AwsSettings | None = None) -> None:
         """LLM 設定変更時の内部ハンドラ."""
@@ -242,13 +292,35 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def _load_mic_devices(self) -> None:
-        """マイクデバイス一覧を読み込んでコンボボックスに設定する."""
-        try:
-            devices = self._audio_capture.list_mic_devices()
-        except Exception:
-            logger.exception("マイクデバイス一覧の取得に失敗しました。")
-            devices = []
+        """マイクデバイス一覧を非同期に読み込んでコンボボックスに設定する.
 
+        PyAudio 経由のデバイス列挙は環境によって数百 ms〜秒級の同期 I/O となり、
+        起動時（mainloop 前）に走ると体感を悪化させる（ADR-005 決定事項 3）。
+        そのため列挙は daemon スレッドで実行し、完了後に ``after_idle`` 経由で
+        GUI スレッドからコンボボックスへ反映する。列挙中はプレースホルダを表示する。
+        """
+        # 列挙中のプレースホルダ表示
+        self._mic_combo["values"] = ["(マイクを検出中...)"]
+        self._mic_combo.current(0)
+
+        def _worker() -> None:
+            try:
+                devices = self._audio_capture.list_mic_devices()
+            except Exception:
+                logger.exception("マイクデバイス一覧の取得に失敗しました。")
+                devices = []
+            # GUI スレッドで反映
+            try:
+                self._root.after_idle(self._apply_mic_devices, devices)
+            except Exception:
+                # ウィンドウ破棄後などは無視
+                pass
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+    def _apply_mic_devices(self, devices: list) -> None:
+        """列挙結果をコンボボックスへ反映する（GUI スレッドで呼ばれる）."""
         self._mic_devices = devices
 
         if devices:
