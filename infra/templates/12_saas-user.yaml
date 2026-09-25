@@ -670,12 +670,17 @@ Resources:
       PathPart: usage
 
   # GET /usage（IAM 認可 + Lambda プロキシ統合）
+  # 認可方式は AWS_IAM（SigV4 署名）である。誰でも叩ける公開 API ではなく、
+  # 呼び出し元は IAM 資格情報で署名する必要がある。アプリ IAM ユーザー（AppUser）には
+  # 後述の UsageApiInvokePolicy で execute-api:Invoke を当該 API の prod/GET/usage に
+  # 限定して付与しており、他リソース・他メソッド・他ステージへの呼び出しは許可されない。
   UsageApiMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref UsageApi
       ResourceId: !Ref UsageApiResource
       HttpMethod: GET
+      # AWS_IAM 認可（SigV4）。維持必須。無認可（NONE）にしないこと。
       AuthorizationType: AWS_IAM
       Integration:
         Type: AWS_PROXY
@@ -690,13 +695,54 @@ Resources:
       RestApiId: !Ref UsageApi
       Description: 使用量 API のデプロイ
 
+  # 使用量 API アクセスログ用の CloudWatch Logs ロググループ
+  # 命名は既存の TranscribeTrailLogGroup（/aws/cloudtrail/${ProjectName}-${UserName}）の
+  # スタイルに倣う。保持期間・タグも既存に合わせる。
+  UsageApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${ProjectName}-${UserName}-usage-api"
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: User
+          Value: !Ref UserName
+
   # prod ステージ
+  # セキュリティ強化:
+  #  - スロットリング（レート制限）: 更新ボタンの連打や誤実装による過剰コール・コスト増を
+  #    抑制するため、全メソッドに ThrottlingRateLimit=5 req/s、ThrottlingBurstLimit=10 を設定。
+  #  - アクセスログ: 上記ロググループへ JSON 形式で出力。requestId / ip / caller / user /
+  #    requestTime / httpMethod / resourcePath / status / protocol / responseLength のみを含め、
+  #    認証情報・Authorization ヘッダ・リクエスト/レスポンス本文は一切ログに残さない。
+  #  - 実行ログ: LoggingLevel=INFO、MetricsEnabled=true。ただし DataTraceEnabled は false 厳守
+  #    （true にするとリクエスト/レスポンス本文がログに出力されるため）。
+  # 注: API Gateway がアカウントレベルで CloudWatch Logs へ書き込むには、リージョン/アカウント
+  #     単位で AWS::ApiGateway::Account（CloudWatchRole）の設定が必要。これはグローバル設定であり
+  #     ユーザーごとスタックに置くと重複・上書き競合するため、共有スタック
+  #     （12_saas-shared.yaml）側に集約している。詳細は infra/README.md を参照。
   UsageApiStage:
     Type: AWS::ApiGateway::Stage
     Properties:
       RestApiId: !Ref UsageApi
       DeploymentId: !Ref UsageApiDeployment
       StageName: prod
+      # アクセスログ設定（本文・認証情報を含めない $context 変数のみ）
+      AccessLogSetting:
+        DestinationArn: !GetAtt UsageApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","caller":"$context.identity.caller","user":"$context.identity.user","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}'
+      # 実行ログ・メトリクス・スロットリング（全メソッド対象）
+      MethodSettings:
+        - HttpMethod: "*"
+          ResourcePath: "/*"
+          # レート制限（過剰コール・コスト増の抑制）
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
+          # 実行ログ（本文は残さない）
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+          MetricsEnabled: true
 
   # API Gateway から Lambda を呼び出す許可
   UsageApiLambdaPermission:

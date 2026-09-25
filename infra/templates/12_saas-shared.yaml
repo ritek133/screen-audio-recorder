@@ -74,12 +74,50 @@ Resources:
               StringLike:
                 aws:SourceArn: !Sub "arn:aws:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${ProjectName}-*"
 
+  # ============================================================
+  # API Gateway アカウント設定（リージョン/アカウント単位のグローバル設定）
+  # ------------------------------------------------------------
+  # API Gateway がアクセスログ・実行ログを CloudWatch Logs へ書き込むには、
+  # アカウントレベルで CloudWatchRole を設定する必要がある
+  # （AWS::ApiGateway::Account）。この設定はリージョン/アカウントにつき 1 つであり、
+  # ユーザーごとスタック（12_saas-user.yaml）に置くとデプロイのたびに上書き競合する。
+  # そのため、1 アカウントに 1 回だけデプロイする共有スタック側へ集約する。
+  # ============================================================
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-apigw-cloudwatch-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # API Gateway アカウント設定にログ用ロールを紐付ける
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
 Outputs:
   TranscribeBucketName:
     Description: Transcribe 用 S3 バケット名
     Value: !Ref TranscribeBucket
     Export:
       Name: !Sub "${ProjectName}-transcribe-bucket-name"
+
+  ApiGatewayCloudWatchRoleArn:
+    Description: API Gateway が CloudWatch Logs へ書き込むためのアカウント用ロール ARN
+    Value: !GetAtt ApiGatewayCloudWatchRole.Arn
+    Export:
+      Name: !Sub "${ProjectName}-apigw-cloudwatch-role-arn"
 
   TranscribeBucketArn:
     Description: Transcribe 用 S3 バケット ARN

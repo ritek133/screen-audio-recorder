@@ -228,3 +228,52 @@ API Gateway（IAM 認証 / SigV4）＋ Lambda を新設する。Lambda は Cloud
 
 「決定 1」で述べた月次前提の記述（暦月境界の近似・翌月 1 日リセット等）は本追記により
 無効となり、日次前提（当日 00:00 UTC 起点・翌日 00:00 UTC リセット）に置き換わる。
+
+## 追記（2026-09-24）: API Gateway セキュリティ強化
+
+使用量 API（`UsageApi` / `UsageApiStage`）に対して、以下のセキュリティ強化を実施した。
+既存の「決定 2」の設計（IAM 認可・Lambda プロキシ統合・上限値の非配布）は維持したうえで、
+運用面の防御を追加する。
+
+### IAM 認可の維持・明確化
+
+- `UsageApiMethod` の `AuthorizationType: AWS_IAM`（SigV4 署名）を維持する。無認可（`NONE`）へは
+  変更しない。アプリ IAM ユーザー（`AppUser`）には `UsageApiInvokePolicy` で
+  `execute-api:Invoke` を `prod/GET/usage` に限定して付与しており、他リソース・他メソッド・
+  他ステージへの呼び出しは許可されない。設計意図が読み取れるよう、テンプレートに日本語コメントを
+  整備した（重複リソースの新規作成はしない）。
+
+### スロットリング（レート制限）
+
+- `prod` ステージの `MethodSettings` に、全メソッド（`HttpMethod: "*"`、`ResourcePath: "/*"`）
+  対象で `ThrottlingRateLimit: 5`（req/s）・`ThrottlingBurstLimit: 10` を設定した。
+  更新ボタンの連打や誤実装による過剰コール・コスト増を抑制する目的。
+
+### アクセスログ・実行ログ（本文はログに残さない）
+
+- **アクセスログ**: `AccessLogSetting` で CloudWatch Logs ロググループ
+  `/aws/apigateway/${ProjectName}-${UserName}-usage-api`（`UsageApiAccessLogGroup`、
+  `RetentionInDays: 14`、`Project`/`User` タグ付与。命名は既存 `TranscribeTrailLogGroup` の
+  スタイルに倣う）へ JSON 形式で出力する。ログには `requestId` / `ip` / `caller` / `user` /
+  `requestTime` / `httpMethod` / `resourcePath` / `status` / `protocol` / `responseLength`
+  のみを含め、**認証情報・`Authorization` ヘッダ・リクエスト/レスポンス本文は一切含めない**。
+- **実行ログ・メトリクス**: `MethodSettings` で `LoggingLevel: INFO`、`MetricsEnabled: true`。
+  `DataTraceEnabled: false` を厳守する（`true` にすると本文がログに出力されるため）。
+
+### API Gateway アカウント設定の配置判断
+
+- API Gateway がアカウントレベルで CloudWatch Logs へ書き込むには、`AWS::ApiGateway::Account`
+  に `CloudWatchRole`（`apigateway.amazonaws.com` が `AssumeRole` し、管理ポリシー
+  `AmazonAPIGatewayPushToCloudWatchLogs` を持つ IAM ロール）を設定する必要がある。
+- この設定は**リージョン/アカウント単位のグローバル設定**であり、ユーザーごとにデプロイされる
+  `12_saas-user.yaml` に置くとデプロイのたびに上書き・競合する懸念がある。
+- **配置判断**: `AWS::ApiGateway::Account` と `CloudWatchRole` は**ユーザーテンプレートには
+  含めず、共有スタック `12_saas-shared.yaml`（1 アカウントに 1 回デプロイ想定）へ集約する**。
+  共有スタックには `ApiGatewayCloudWatchRole`（IAM ロール）と `ApiGatewayAccount`
+  （`AWS::ApiGateway::Account`）を追加し、Output `ApiGatewayCloudWatchRoleArn` を公開した。
+  ユーザーテンプレート側はステージのログ設定（`AccessLogSetting` / `MethodSettings`）のみを持つ。
+  この「アカウント設定は共有側／ユーザー側はステージ設定のみ」という切り分けにより、ユーザー
+  スタックのデプロイのたびにアカウント設定を上書き競合させることを防ぐ。
+- README（`infra/README.md`）に、アカウント/リージョンで一度だけ API Gateway の CloudWatch
+  Logs ロールを設定する必要がある旨と、共有スタックのデプロイ手順（`CAPABILITY_NAMED_IAM`）
+  および CLI/コンソールでの単発設定手順を追記した。

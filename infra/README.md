@@ -48,6 +48,51 @@ infra/
   評価窓を 1 日（`Period: 86400`）とした安全弁であり、
   残量表示に用いる厳密な当日累計（当日 00:00 UTC 起点）は集約 Lambda が算出する。
 
+##### 使用量 API のセキュリティ
+使用量 API（`UsageApi` / `UsageApiStage`）には以下のセキュリティ対策を施している。
+
+- **IAM 認可（SigV4）**: `GET /usage`（`UsageApiMethod`）の `AuthorizationType` は
+  `AWS_IAM`。呼び出しには IAM 資格情報での SigV4 署名が必須で、公開 API ではない。
+  アプリ IAM ユーザーには `UsageApiInvokePolicy` で `execute-api:Invoke` を
+  当該 API の `prod/GET/usage` に限定して付与しており、他リソース・他メソッド・他ステージへの
+  呼び出しは許可されない。
+- **スロットリング（レート制限）**: `prod` ステージの `MethodSettings` で全メソッドに
+  `ThrottlingRateLimit: 5`（req/s）・`ThrottlingBurstLimit: 10` を設定。更新ボタンの連打や
+  誤実装による過剰コール・コスト増を抑制する。
+- **アクセスログ**: `prod` ステージの `AccessLogSetting` で CloudWatch Logs ロググループ
+  `/aws/apigateway/${ProjectName}-${UserName}-usage-api`（`UsageApiAccessLogGroup`、
+  `RetentionInDays: 14`）へ JSON 形式で出力する。ログには `requestId` / `ip` / `caller` /
+  `user` / `requestTime` / `httpMethod` / `resourcePath` / `status` / `protocol` /
+  `responseLength` のみを含め、**認証情報・`Authorization` ヘッダ・リクエスト/レスポンス本文は
+  一切残さない**。
+- **実行ログ・メトリクス**: `MethodSettings` で `LoggingLevel: INFO`、`MetricsEnabled: true` を
+  有効化。ただし `DataTraceEnabled: false` を厳守する（`true` にするとリクエスト/レスポンス本文が
+  ログに出力されるため、有効化しない）。
+
+> **前提: API Gateway の CloudWatch Logs ロール設定（アカウント/リージョンで一度だけ）**
+>
+> API Gateway がアクセスログ・実行ログを CloudWatch Logs へ書き込むには、
+> アカウントレベルの設定（`AWS::ApiGateway::Account` の `CloudWatchRoleArn`）が必要である。
+> これはリージョン/アカウントにつき 1 つのグローバル設定であり、ユーザーごとスタック
+> （`12_saas-user.yaml`）に置くとデプロイのたびに上書き競合する。そのため
+> **共有スタック（`12_saas-shared.yaml`）に集約**しており、共有スタックを一度デプロイすれば
+> 設定が完了する（下記「3a. 共有リソース」を参照）。
+>
+> 共有スタックを使わず個別に設定する場合は、次のいずれかを一度だけ実行する。
+>
+> - CLI（ロールを作成済みの場合）:
+>
+>   ```bash
+>   aws apigateway update-account \
+>     --patch-operations op=replace,path=/cloudwatchRoleArn,value=arn:aws:iam::<アカウントID>:role/<ログ用ロール名>
+>   ```
+>
+> - マネジメントコンソール: API Gateway → 設定（Settings）→ CloudWatch log role ARN に
+>   `AmazonAPIGatewayPushToCloudWatchLogs` を持つロールの ARN を設定する。
+>
+> この設定が未了だと、ユーザースタックのステージでログ出力が有効化されずデプロイが失敗する
+> 場合があるため、**ユーザースタックの前に共有スタックをデプロイすること**。
+
 ## デプロイ手順
 
 ### 前提条件
@@ -81,8 +126,16 @@ aws cloudformation deploy \
 aws cloudformation deploy \
   --template-file templates/12_saas-shared.yaml \
   --stack-name screen-recorder-saas-shared \
+  --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides ProjectName=screen-recorder
 ```
+
+> **CAPABILITY / API Gateway アカウント設定**: 共有スタックは S3 バケットに加えて、
+> API Gateway が CloudWatch Logs へログ出力するためのアカウント用 IAM ロール
+> （`AWS::IAM::Role` + `AWS::ApiGateway::Account`）を作成する。名前付き IAM リソースを
+> 含むため `--capabilities CAPABILITY_NAMED_IAM` が必要。この設定はリージョン/アカウントに
+> つき一度だけ行えばよく、ユーザースタックのアクセスログ/実行ログの前提となる（上記
+> 「使用量 API のセキュリティ」を参照）。
 
 #### 3b. ユーザーリソース（ユーザーごと）
 
