@@ -76,6 +76,11 @@ class MemoListView:
         self._total_pages = 1
         self._memos: list[Memo] = []
 
+        # 各領域の折りたたみ状態（True=展開, False=折りたたみ）
+        self._tree_expanded = True
+        self._summary_expanded = True
+        self._detail_expanded = True
+
         self.frame = ttk.LabelFrame(parent, text="メモ一覧", padding=6)
         self._build_ui()
         self.refresh()
@@ -137,9 +142,22 @@ class MemoListView:
         # ==============================================================
         left_frame = ttk.Frame(paned)
 
-        # --- Treeview（メモ一覧）---
+        # --- メモ一覧（折りたたみ可能）---
+        # 折りたたみ用トグルボタン付きヘッダ
+        tree_header = ttk.Frame(left_frame)
+        tree_header.pack(fill=tk.X)
+        self._tree_toggle_btn = ttk.Button(
+            tree_header,
+            text="▼ 一覧",
+            width=8,
+            command=self._on_toggle_tree,
+        )
+        self._tree_toggle_btn.pack(side=tk.LEFT)
+
+        # 折りたたみ対象の中身コンテナ
         tree_frame = ttk.Frame(left_frame)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
+        tree_frame.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self._tree_frame = tree_frame
 
         columns = ("created_at", "theme")
         self._tree = ttk.Treeview(
@@ -239,17 +257,34 @@ class MemoListView:
         right_paned = ttk.PanedWindow(right_frame, orient=tk.VERTICAL)
         right_paned.pack(fill=tk.BOTH, expand=True)
 
-        # --- 要約ペイン ---
-        summary_frame = ttk.LabelFrame(right_paned, text="要約", padding=4)
+        # --- 要約ペイン（折りたたみ可能）---
+        summary_frame = ttk.Frame(right_paned)
+        self._summary_frame = summary_frame
+
+        # 折りたたみ用トグルボタン付きヘッダ
+        summary_header = ttk.Frame(summary_frame)
+        summary_header.pack(fill=tk.X)
+        self._summary_toggle_btn = ttk.Button(
+            summary_header,
+            text="▼ 要約",
+            width=8,
+            command=self._on_toggle_summary,
+        )
+        self._summary_toggle_btn.pack(side=tk.LEFT)
+
+        # 折りたたみ対象の中身コンテナ
+        summary_body = ttk.Frame(summary_frame)
+        summary_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self._summary_body = summary_body
 
         self._summary_text = tk.Text(
-            summary_frame,
+            summary_body,
             wrap=tk.WORD,
             state=tk.DISABLED,
             background="#f5f5f5",
         )
         summary_scroll = ttk.Scrollbar(
-            summary_frame, orient=tk.VERTICAL, command=self._summary_text.yview
+            summary_body, orient=tk.VERTICAL, command=self._summary_text.yview
         )
         self._summary_text.configure(yscrollcommand=summary_scroll.set)
         self._summary_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -257,16 +292,33 @@ class MemoListView:
 
         right_paned.add(summary_frame, weight=1)
 
-        # --- 全文ペイン ---
-        detail_frame = ttk.LabelFrame(right_paned, text="全文", padding=4)
+        # --- 全文ペイン（折りたたみ可能）---
+        detail_frame = ttk.Frame(right_paned)
+        self._detail_frame = detail_frame
+
+        # 折りたたみ用トグルボタン付きヘッダ
+        detail_header = ttk.Frame(detail_frame)
+        detail_header.pack(fill=tk.X)
+        self._detail_toggle_btn = ttk.Button(
+            detail_header,
+            text="▼ 全文",
+            width=8,
+            command=self._on_toggle_detail,
+        )
+        self._detail_toggle_btn.pack(side=tk.LEFT)
+
+        # 折りたたみ対象の中身コンテナ
+        detail_body = ttk.Frame(detail_frame)
+        detail_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self._detail_body = detail_body
 
         self._detail_text = tk.Text(
-            detail_frame,
+            detail_body,
             wrap=tk.WORD,
             state=tk.DISABLED,
         )
         detail_scroll = ttk.Scrollbar(
-            detail_frame, orient=tk.VERTICAL, command=self._detail_text.yview
+            detail_body, orient=tk.VERTICAL, command=self._detail_text.yview
         )
         self._detail_text.configure(yscrollcommand=detail_scroll.set)
         self._detail_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -321,6 +373,36 @@ class MemoListView:
     # ------------------------------------------------------------------
     # イベントハンドラ
     # ------------------------------------------------------------------
+
+    def _on_toggle_tree(self) -> None:
+        """メモ一覧領域の折りたたみ／展開を切り替える."""
+        self._tree_expanded = not self._tree_expanded
+        if self._tree_expanded:
+            self._tree_frame.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+            self._tree_toggle_btn.config(text="▼ 一覧")
+        else:
+            self._tree_frame.pack_forget()
+            self._tree_toggle_btn.config(text="▶ 一覧")
+
+    def _on_toggle_summary(self) -> None:
+        """要約領域の折りたたみ／展開を切り替える."""
+        self._summary_expanded = not self._summary_expanded
+        if self._summary_expanded:
+            self._summary_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+            self._summary_toggle_btn.config(text="▼ 要約")
+        else:
+            self._summary_body.pack_forget()
+            self._summary_toggle_btn.config(text="▶ 要約")
+
+    def _on_toggle_detail(self) -> None:
+        """全文領域の折りたたみ／展開を切り替える."""
+        self._detail_expanded = not self._detail_expanded
+        if self._detail_expanded:
+            self._detail_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+            self._detail_toggle_btn.config(text="▼ 全文")
+        else:
+            self._detail_body.pack_forget()
+            self._detail_toggle_btn.config(text="▶ 全文")
 
     def _on_select(self, event: tk.Event) -> None:
         """メモ選択イベントハンドラ."""
