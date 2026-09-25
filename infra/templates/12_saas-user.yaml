@@ -103,10 +103,10 @@ Resources:
   # ============================================================
   # IAM ポリシー - Bedrock（推論プロファイル経由のみ許可）
   # ============================================================
-  BedrockPolicy:
-    Type: AWS::IAM::Policy
+  BedrockManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: !Sub "${ProjectName}-${UserName}-bedrock"
+      ManagedPolicyName: !Sub "${ProjectName}-${UserName}-bedrock"
       Users:
         - !Ref AppUser
       PolicyDocument:
@@ -161,11 +161,11 @@ Resources:
   # ============================================================
   # IAM ポリシー - Amazon Transcribe
   # ============================================================
-  TranscribePolicy:
-    Type: AWS::IAM::Policy
+  TranscribeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Condition: ShouldEnableTranscribe
     Properties:
-      PolicyName: !Sub "${ProjectName}-${UserName}-transcribe"
+      ManagedPolicyName: !Sub "${ProjectName}-${UserName}-transcribe"
       Users:
         - !Ref AppUser
       PolicyDocument:
@@ -672,7 +672,7 @@ Resources:
   # GET /usage（IAM 認可 + Lambda プロキシ統合）
   # 認可方式は AWS_IAM（SigV4 署名）である。誰でも叩ける公開 API ではなく、
   # 呼び出し元は IAM 資格情報で署名する必要がある。アプリ IAM ユーザー（AppUser）には
-  # 後述の UsageApiInvokePolicy で execute-api:Invoke を当該 API の prod/GET/usage に
+  # 後述の UsageApiInvokeManagedPolicy で execute-api:Invoke を当該 API の prod/GET/usage に
   # 限定して付与しており、他リソース・他メソッド・他ステージへの呼び出しは許可されない。
   UsageApiMethod:
     Type: AWS::ApiGateway::Method
@@ -757,10 +757,10 @@ Resources:
 
   # アプリ IAM ユーザーへ execute-api:Invoke を付与
   # （当該 API の prod ステージ・GET /usage リソースに限定）
-  UsageApiInvokePolicy:
-    Type: AWS::IAM::Policy
+  UsageApiInvokeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: !Sub "${ProjectName}-${UserName}-usage-api-invoke"
+      ManagedPolicyName: !Sub "${ProjectName}-${UserName}-usage-api-invoke"
       Users:
         - !Ref AppUser
       PolicyDocument:
