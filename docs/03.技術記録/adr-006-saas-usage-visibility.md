@@ -253,7 +253,7 @@ API Gateway（IAM 認証 / SigV4）＋ Lambda を新設する。Lambda は Cloud
 
 - **アクセスログ**: `AccessLogSetting` で CloudWatch Logs ロググループ
   `/aws/apigateway/${ProjectName}-${UserName}-usage-api`（`UsageApiAccessLogGroup`、
-  `RetentionInDays: 14`、`Project`/`User` タグ付与。命名は既存 `TranscribeTrailLogGroup` の
+  `RetentionInDays: 90`（約 3 か月）、`Project`/`User` タグ付与。命名は既存 `TranscribeTrailLogGroup` の
   スタイルに倣う）へ JSON 形式で出力する。ログには `requestId` / `ip` / `caller` / `user` /
   `requestTime` / `httpMethod` / `resourcePath` / `status` / `protocol` / `responseLength`
   のみを含め、**認証情報・`Authorization` ヘッダ・リクエスト/レスポンス本文は一切含めない**。

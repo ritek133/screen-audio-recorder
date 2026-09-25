@@ -697,12 +697,14 @@ Resources:
 
   # 使用量 API アクセスログ用の CloudWatch Logs ロググループ
   # 命名は既存の TranscribeTrailLogGroup（/aws/cloudtrail/${ProjectName}-${UserName}）の
-  # スタイルに倣う。保持期間・タグも既存に合わせる。
+  # スタイルに倣う。タグも既存に合わせる。
+  # 保持期間はユーザー要望により 90 日（約 3 か月）とする
+  # （CloudWatch Logs の RetentionInDays 許可値のうち 3 か月相当は 90）。
   UsageApiAccessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/apigateway/${ProjectName}-${UserName}-usage-api"
-      RetentionInDays: 14
+      RetentionInDays: 90
       Tags:
         - Key: Project
           Value: !Ref ProjectName

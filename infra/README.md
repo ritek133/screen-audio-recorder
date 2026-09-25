@@ -61,7 +61,7 @@ infra/
   誤実装による過剰コール・コスト増を抑制する。
 - **アクセスログ**: `prod` ステージの `AccessLogSetting` で CloudWatch Logs ロググループ
   `/aws/apigateway/${ProjectName}-${UserName}-usage-api`（`UsageApiAccessLogGroup`、
-  `RetentionInDays: 14`）へ JSON 形式で出力する。ログには `requestId` / `ip` / `caller` /
+  `RetentionInDays: 90`（約 3 か月））へ JSON 形式で出力する。ログには `requestId` / `ip` / `caller` /
   `user` / `requestTime` / `httpMethod` / `resourcePath` / `status` / `protocol` /
   `responseLength` のみを含め、**認証情報・`Authorization` ヘッダ・リクエスト/レスポンス本文は
   一切残さない**。
