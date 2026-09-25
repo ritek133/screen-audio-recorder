@@ -116,6 +116,25 @@ class TestRefreshUsage:
 
         assert "未設定" in win._usage_tokens_var.get()
 
+    def test_on_memo_saved_triggers_refresh_usage(self, mocker) -> None:
+        """文字起こし・LLM 要約完了時（_on_memo_saved）に refresh_usage が呼ばれる.
+
+        recorder_controller は「文字起こし→LLM 要約→メモ保存」完了後に
+        _on_memo_saved を GUI スレッドで 1 回呼ぶ。ここで残量を再取得することで
+        「文字起こし・LLM 要約時」の自動更新を実現する。実装を revert すると
+        refresh_usage が呼ばれなくなり、このテストは失敗する。
+        """
+        win = _make_window_stub()
+        win._memo_list_view = mocker.Mock()
+        win._status_var = _FakeVar()
+        refresh_spy = mocker.patch.object(win, "refresh_usage")
+
+        win._on_memo_saved()
+
+        refresh_spy.assert_called_once()
+        # メモ一覧更新など既存挙動も維持されていること。
+        win._memo_list_view.refresh.assert_called_once()
+
     def test_background_fetch_updates_labels(self, mocker) -> None:
         """バックグラウンド取得完了で StringVar が更新される（fetch をモック）."""
         aws_settings = AwsSettings(

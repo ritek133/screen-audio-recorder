@@ -211,6 +211,10 @@ class MainWindow:
             side=tk.LEFT, padx=(0, 12)
         )
 
+        # 「残量更新」ボタンは補助的な手動更新手段として残す。
+        # 残量の自動更新は「アプリ起動時／文字起こし・LLM 要約完了時」に限定するが、
+        # ユーザー要求は自動更新のタイミングに関するものであり、手動更新ボタンの
+        # 削除は明示されていない。任意のタイミングで最新値を確認できる利便性のため残す。
         self._usage_refresh_btn = ttk.Button(
             usage_row,
             text="残量更新",
@@ -284,6 +288,13 @@ class MainWindow:
 
     def update_aws_settings(self, aws_settings: AwsSettings | None) -> None:
         """AWS 設定を更新し、残存容量表示を再取得する.
+
+        残存容量の自動更新の主なタイミングは「アプリ起動時」と
+        「文字起こし・LLM 要約完了時（_on_memo_saved 経由）」の 2 つに限定するが、
+        ここでの再取得は例外的に残す。使用量 API のエンドポイントが変わった直後に
+        表示を更新できないと、エンドポイント未設定→設定直後に残量が反映されず
+        実用上不便なため。設定変更は稀なイベントであり、ユーザー体験上必要な
+        補助的な再取得と位置づける。
 
         Args:
             aws_settings: 新しい AWS 接続設定（使用量 API エンドポイント含む）。
@@ -467,6 +478,16 @@ class MainWindow:
         self._memo_list_view.refresh()
         self._status_var.set("停止中")
         logger.info("メモ一覧を更新しました。")
+
+        # 残存容量の自動更新（文字起こし・LLM 要約完了時）。
+        # このコールバックは recorder_controller の _on_transcribe_complete で
+        # 「文字起こし → LLM 後処理（要約）→ メモ保存」がすべて完了した後に
+        # GUI スレッドで 1 回だけ呼ばれる。文字起こし（Transcribe）と要約（Bedrock）は
+        # 同一パイプラインで連続実行され、それぞれのメトリクスに反映されるため、
+        # 完了後にまとめて 1 回だけ使用量を取り直すのが正しく、二重取得も避けられる。
+        # refresh_usage 自体はネットワーク I/O を daemon スレッドで行い root.after で
+        # GUI 反映する既存パターンのため、GUI スレッドから呼んでも問題ない。
+        self.refresh_usage()
 
     def _on_close(self) -> None:
         """ウィンドウ閉じボタンのハンドラ.
