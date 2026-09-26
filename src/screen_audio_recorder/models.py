@@ -323,9 +323,18 @@ class AppSettings:
         verbose_logging: 詳細ログを有効にするかどうか。
             True の場合、ファイル・コンソール共に DEBUG レベルで出力する。
             False の場合、ファイルは INFO、コンソールは WARNING のみ出力する。
+        memo_tree_expanded: メモ一覧領域を展開表示するかどうか。
+            False の場合、次回起動時に折りたたんだ状態で表示する。
+        memo_summary_expanded: 要約領域を展開表示するかどうか。
+            False の場合、次回起動時に折りたたんだ状態で表示する。
+        memo_detail_expanded: 全文領域を展開表示するかどうか。
+            False の場合、次回起動時に折りたたんだ状態で表示する。
     """
 
     verbose_logging: bool = False
+    memo_tree_expanded: bool = True
+    memo_summary_expanded: bool = True
+    memo_detail_expanded: bool = True
 
 
 @dataclass

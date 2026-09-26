@@ -76,10 +76,13 @@ class AdvancedSettingsTab:
         ).pack(side=tk.LEFT, padx=(0, 6))
 
     def _on_save(self) -> None:
-        """設定を保存する."""
-        settings = AppSettings(
-            verbose_logging=self._verbose_var.get(),
-        )
+        """設定を保存する.
+
+        他の設定（メモ領域の折りたたみ状態など）を上書きしないよう、
+        最新の設定を読み込んでから verbose_logging のみ更新して保存する。
+        """
+        settings = load_app_settings()
+        settings.verbose_logging = self._verbose_var.get()
         try:
             save_app_settings(settings)
             self._settings = settings
