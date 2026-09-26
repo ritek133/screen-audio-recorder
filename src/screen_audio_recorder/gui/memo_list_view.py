@@ -76,13 +76,25 @@ class MemoListView:
         self._total_pages = 1
         self._memos: list[Memo] = []
 
-        # 各領域の折りたたみ状態（True=展開, False=折りたたみ）
-        self._tree_expanded = True
-        self._summary_expanded = True
-        self._detail_expanded = True
+        # 各領域の折りたたみ状態（True=展開, False=折りたたみ）。
+        # 前回終了時の状態を app_settings.json から復元する。
+        # 読み込みに失敗しても起動を妨げないよう、失敗時は全展開にフォールバックする。
+        try:
+            from screen_audio_recorder.app_settings_store import load_app_settings
+
+            settings = load_app_settings()
+            self._tree_expanded = settings.memo_tree_expanded
+            self._summary_expanded = settings.memo_summary_expanded
+            self._detail_expanded = settings.memo_detail_expanded
+        except Exception:
+            logger.debug("メモ領域の折りたたみ状態の読み込みに失敗しました。全展開で表示します。")
+            self._tree_expanded = True
+            self._summary_expanded = True
+            self._detail_expanded = True
 
         self.frame = ttk.LabelFrame(parent, text="メモ一覧", padding=6)
         self._build_ui()
+        self._apply_collapse_state()
         self.refresh()
 
     # ------------------------------------------------------------------
@@ -374,9 +386,8 @@ class MemoListView:
     # イベントハンドラ
     # ------------------------------------------------------------------
 
-    def _on_toggle_tree(self) -> None:
-        """メモ一覧領域の折りたたみ／展開を切り替える."""
-        self._tree_expanded = not self._tree_expanded
+    def _apply_tree_visibility(self) -> None:
+        """メモ一覧領域の表示状態を現在のフラグに合わせて反映する."""
         if self._tree_expanded:
             self._tree_frame.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
             self._tree_toggle_btn.config(text="▼ 一覧")
@@ -384,9 +395,8 @@ class MemoListView:
             self._tree_frame.pack_forget()
             self._tree_toggle_btn.config(text="▶ 一覧")
 
-    def _on_toggle_summary(self) -> None:
-        """要約領域の折りたたみ／展開を切り替える."""
-        self._summary_expanded = not self._summary_expanded
+    def _apply_summary_visibility(self) -> None:
+        """要約領域の表示状態を現在のフラグに合わせて反映する."""
         if self._summary_expanded:
             self._summary_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
             self._summary_toggle_btn.config(text="▼ 要約")
@@ -394,15 +404,58 @@ class MemoListView:
             self._summary_body.pack_forget()
             self._summary_toggle_btn.config(text="▶ 要約")
 
-    def _on_toggle_detail(self) -> None:
-        """全文領域の折りたたみ／展開を切り替える."""
-        self._detail_expanded = not self._detail_expanded
+    def _apply_detail_visibility(self) -> None:
+        """全文領域の表示状態を現在のフラグに合わせて反映する."""
         if self._detail_expanded:
             self._detail_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
             self._detail_toggle_btn.config(text="▼ 全文")
         else:
             self._detail_body.pack_forget()
             self._detail_toggle_btn.config(text="▶ 全文")
+
+    def _apply_collapse_state(self) -> None:
+        """起動時に3領域の折りたたみ状態を初期表示へ反映する."""
+        self._apply_tree_visibility()
+        self._apply_summary_visibility()
+        self._apply_detail_visibility()
+
+    def _persist_collapse_state(self) -> None:
+        """現在の折りたたみ状態を app_settings.json に保存する.
+
+        他の設定を上書きしないよう、最新設定を読み込んでから該当フィールド
+        のみ更新して保存する。保存失敗は GUI 操作を妨げないよう握りつぶす。
+        """
+        try:
+            from screen_audio_recorder.app_settings_store import (
+                load_app_settings,
+                save_app_settings,
+            )
+
+            settings = load_app_settings()
+            settings.memo_tree_expanded = self._tree_expanded
+            settings.memo_summary_expanded = self._summary_expanded
+            settings.memo_detail_expanded = self._detail_expanded
+            save_app_settings(settings)
+        except Exception:
+            logger.debug("メモ領域の折りたたみ状態の保存に失敗しました。")
+
+    def _on_toggle_tree(self) -> None:
+        """メモ一覧領域の折りたたみ／展開を切り替える."""
+        self._tree_expanded = not self._tree_expanded
+        self._apply_tree_visibility()
+        self._persist_collapse_state()
+
+    def _on_toggle_summary(self) -> None:
+        """要約領域の折りたたみ／展開を切り替える."""
+        self._summary_expanded = not self._summary_expanded
+        self._apply_summary_visibility()
+        self._persist_collapse_state()
+
+    def _on_toggle_detail(self) -> None:
+        """全文領域の折りたたみ／展開を切り替える."""
+        self._detail_expanded = not self._detail_expanded
+        self._apply_detail_visibility()
+        self._persist_collapse_state()
 
     def _on_select(self, event: tk.Event) -> None:
         """メモ選択イベントハンドラ."""

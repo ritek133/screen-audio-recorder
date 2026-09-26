@@ -418,6 +418,8 @@ class TestCollapseToggle:
         view._tree_toggle_btn = MagicMock()
         view._summary_toggle_btn = MagicMock()
         view._detail_toggle_btn = MagicMock()
+        # 実ファイルへの保存を避けるため永続化をモック化
+        view._persist_collapse_state = MagicMock()
         return view
 
     def test_toggle_tree_collapses_then_expands(self) -> None:
@@ -474,3 +476,69 @@ class TestCollapseToggle:
         assert view._summary_expanded is False
         assert view._tree_expanded is True
         assert view._detail_expanded is True
+
+    def test_toggle_persists_state(self) -> None:
+        """トグルのたびに折りたたみ状態が永続化される（次回起動時の記憶）."""
+        view = self._make_view()
+
+        view._on_toggle_tree()
+        view._on_toggle_summary()
+        view._on_toggle_detail()
+
+        # 3回のトグルそれぞれで保存が呼ばれる
+        assert view._persist_collapse_state.call_count == 3
+
+
+class TestApplyCollapseState:
+    """起動時の折りたたみ状態反映のテスト."""
+
+    def _make_view(
+        self, tree: bool, summary: bool, detail: bool
+    ) -> MemoListView:
+        view = object.__new__(MemoListView)
+        view._tree_expanded = tree
+        view._summary_expanded = summary
+        view._detail_expanded = detail
+        view._tree_frame = MagicMock()
+        view._summary_body = MagicMock()
+        view._detail_body = MagicMock()
+        view._tree_toggle_btn = MagicMock()
+        view._summary_toggle_btn = MagicMock()
+        view._detail_toggle_btn = MagicMock()
+        return view
+
+    def test_expanded_state_packs_bodies(self) -> None:
+        """全展開状態では中身が pack され、ラベルは ▼ になる."""
+        view = self._make_view(True, True, True)
+
+        view._apply_collapse_state()
+
+        view._tree_frame.pack.assert_called_once()
+        view._summary_body.pack.assert_called_once()
+        view._detail_body.pack.assert_called_once()
+        view._tree_toggle_btn.config.assert_called_with(text="▼ 一覧")
+        view._summary_toggle_btn.config.assert_called_with(text="▼ 要約")
+        view._detail_toggle_btn.config.assert_called_with(text="▼ 全文")
+
+    def test_collapsed_state_forgets_bodies(self) -> None:
+        """折りたたみ状態では中身が pack_forget され、ラベルは ▶ になる."""
+        view = self._make_view(False, False, False)
+
+        view._apply_collapse_state()
+
+        view._tree_frame.pack_forget.assert_called_once()
+        view._summary_body.pack_forget.assert_called_once()
+        view._detail_body.pack_forget.assert_called_once()
+        view._tree_toggle_btn.config.assert_called_with(text="▶ 一覧")
+        view._summary_toggle_btn.config.assert_called_with(text="▶ 要約")
+        view._detail_toggle_btn.config.assert_called_with(text="▶ 全文")
+
+    def test_mixed_state(self) -> None:
+        """混在状態（一覧展開・要約折りたたみ・全文展開）が正しく反映される."""
+        view = self._make_view(True, False, True)
+
+        view._apply_collapse_state()
+
+        view._tree_frame.pack.assert_called_once()
+        view._summary_body.pack_forget.assert_called_once()
+        view._detail_body.pack.assert_called_once()
