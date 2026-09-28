@@ -650,3 +650,96 @@ class TestMemoStoreIntegration:
 
         # generate → create の順序を確認
         assert call_order.index("generate") < call_order.index("create")
+
+
+# ---------------------------------------------------------------------------
+# 文字起こしバックエンド別のテキスト整形スキップ挙動テスト（解釈B）
+# ---------------------------------------------------------------------------
+
+
+class TestSkipFixTextByTranscriberBackend:
+    """文字起こしバックエンドに応じて LLM 整形をスキップすることを検証する.
+
+    Amazon Transcribe（SaaS 構成）のときは整形をスキップし、生の文字起こし
+    テキストをそのまま全文（本文）に使用する。それ以外のバックエンドでは
+    従来どおり整形を適用する。
+    """
+
+    @staticmethod
+    def _build_controller(backend):
+        """指定した文字起こしバックエンドの transcriber を持つ controller を作る."""
+        from screen_audio_recorder.models import PostProcessResult
+
+        mock_transcriber = MagicMock()
+        mock_transcriber.backend = backend
+
+        mock_post_processor = MagicMock()
+        mock_post_processor.process.return_value = PostProcessResult(
+            corrected_text="本文",
+            summary="要約",
+            theme="テーマ",
+            used_llm=True,
+        )
+
+        mock_theme_generator = MagicMock()
+        mock_theme_generator.generate.return_value = "テーマ"
+
+        mock_memo_store = MagicMock()
+
+        controller = RecorderController(
+            screen_capture=MagicMock(),
+            audio_capture=MagicMock(),
+            video_encoder=MagicMock(),
+            transcriber=mock_transcriber,
+            theme_generator=mock_theme_generator,
+            memo_store=mock_memo_store,
+            file_store=MagicMock(),
+            error_notifier=MagicMock(),
+            text_post_processor=mock_post_processor,
+        )
+        return controller, mock_post_processor
+
+    def test_aws_transcribe_skips_fix_text(self) -> None:
+        """Amazon Transcribe のとき skip_fix_text=True で process が呼ばれる."""
+        from screen_audio_recorder.models import TranscriberBackend
+
+        controller, post_processor = self._build_controller(
+            TranscriberBackend.AWS_TRANSCRIBE
+        )
+        result = make_transcribe_result(text="生の文字起こし")
+
+        controller._on_transcribe_complete(result, Path("dummy.wav"))
+
+        post_processor.process.assert_called_once()
+        _, kwargs = post_processor.process.call_args
+        assert kwargs.get("skip_fix_text") is True
+
+    def test_local_backend_applies_fix_text(self) -> None:
+        """ローカル文字起こしのとき skip_fix_text=False で process が呼ばれる."""
+        from screen_audio_recorder.models import TranscriberBackend
+
+        controller, post_processor = self._build_controller(
+            TranscriberBackend.LOCAL
+        )
+        result = make_transcribe_result(text="生の文字起こし")
+
+        controller._on_transcribe_complete(result, Path("dummy.wav"))
+
+        post_processor.process.assert_called_once()
+        _, kwargs = post_processor.process.call_args
+        assert kwargs.get("skip_fix_text") is False
+
+    def test_vllm_backend_applies_fix_text(self) -> None:
+        """vLLM 文字起こしのとき skip_fix_text=False で process が呼ばれる."""
+        from screen_audio_recorder.models import TranscriberBackend
+
+        controller, post_processor = self._build_controller(
+            TranscriberBackend.VLLM
+        )
+        result = make_transcribe_result(text="生の文字起こし")
+
+        controller._on_transcribe_complete(result, Path("dummy.wav"))
+
+        post_processor.process.assert_called_once()
+        _, kwargs = post_processor.process.call_args
+        assert kwargs.get("skip_fix_text") is False

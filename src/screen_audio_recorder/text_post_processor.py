@@ -107,11 +107,16 @@ class TextPostProcessor:
         """
         self._settings = settings
 
-    def process(self, text: str) -> PostProcessResult:
+    def process(self, text: str, *, skip_fix_text: bool = False) -> PostProcessResult:
         """文字起こしテキストを後処理する.
 
         Args:
             text: 文字起こし生テキスト
+            skip_fix_text: True の場合、LLM によるテキスト整形（句読点補完・
+                誤字脱字修正）をスキップし、生テキストをそのまま本文
+                （corrected_text）とする。要約・テーマ生成は従来どおり実行する。
+                Amazon Transcribe のように文字起こし側で整形済みの結果が得られる
+                SaaS 構成で、二重整形を避けたい場合に使用する。
 
         Returns:
             後処理結果（修正テキスト・要約・テーマ）
@@ -128,9 +133,14 @@ class TextPostProcessor:
         used_llm = False
 
         # 1. テキスト修正
-        corrected_text = self._fix_text(text)
-        if corrected_text != text:
-            used_llm = True
+        if skip_fix_text:
+            # 整形をスキップし、生テキストをそのまま本文とする
+            corrected_text = text
+            logger.info("テキスト整形をスキップし、生の文字起こしテキストを全文に使用します。")
+        else:
+            corrected_text = self._fix_text(text)
+            if corrected_text != text:
+                used_llm = True
 
         # 2. 要約生成
         summary = self._summarize(corrected_text)
