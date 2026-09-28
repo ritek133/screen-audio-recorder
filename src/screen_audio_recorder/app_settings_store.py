@@ -49,6 +49,9 @@ def load_app_settings(path: Path | None = None) -> AppSettings:
 
     return AppSettings(
         verbose_logging=data.get("verbose_logging", False),
+        memo_tree_expanded=data.get("memo_tree_expanded", True),
+        memo_summary_expanded=data.get("memo_summary_expanded", True),
+        memo_detail_expanded=data.get("memo_detail_expanded", True),
     )
 
 
@@ -66,6 +69,9 @@ def save_app_settings(settings: AppSettings, path: Path | None = None) -> None:
 
     data = {
         "verbose_logging": settings.verbose_logging,
+        "memo_tree_expanded": settings.memo_tree_expanded,
+        "memo_summary_expanded": settings.memo_summary_expanded,
+        "memo_detail_expanded": settings.memo_detail_expanded,
     }
     text = json.dumps(data, ensure_ascii=False, indent=2)
     path.write_text(text, encoding="utf-8")

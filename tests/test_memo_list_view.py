@@ -387,3 +387,158 @@ class TestOnProcessingDoneCallback:
         # 例外が伝播しないこと。
         view._on_reprocess_done()
         view.refresh.assert_called_once()
+
+
+
+# ---------------------------------------------------------------------------
+# 折りたたみ（collapse/expand）トグルのテスト
+# ---------------------------------------------------------------------------
+
+
+class TestCollapseToggle:
+    """メモ一覧・要約・全文の各領域を折りたたみ／展開するトグルのテスト.
+
+    ウィンドウを小さくするため、各領域の中身コンテナを pack_forget() で
+    非表示にし、再度 pack() で表示する。ボタンのラベル（▼=展開/▶=折りたたみ）
+    と内部状態フラグが正しく切り替わることを検証する。
+    tkinter を生成せず、frame と button はモックで置き換える。
+    """
+
+    def _make_view(self) -> MemoListView:
+        """tkinter を生成せずにトグル検証に必要な最小状態を組み立てる."""
+        view = object.__new__(MemoListView)
+        # 折りたたみ状態フラグ（初期は全て展開）
+        view._tree_expanded = True
+        view._summary_expanded = True
+        view._detail_expanded = True
+        # 中身コンテナ・トグルボタンをモック化
+        view._tree_frame = MagicMock()
+        view._summary_body = MagicMock()
+        view._detail_body = MagicMock()
+        view._tree_toggle_btn = MagicMock()
+        view._summary_toggle_btn = MagicMock()
+        view._detail_toggle_btn = MagicMock()
+        # 実ファイルへの保存を避けるため永続化をモック化
+        view._persist_collapse_state = MagicMock()
+        return view
+
+    def test_toggle_tree_collapses_then_expands(self) -> None:
+        """メモ一覧を折りたたみ→展開できる."""
+        view = self._make_view()
+
+        # 1回目: 折りたたみ
+        view._on_toggle_tree()
+        assert view._tree_expanded is False
+        view._tree_frame.pack_forget.assert_called_once()
+        view._tree_toggle_btn.config.assert_called_with(text="▶ 一覧")
+
+        # 2回目: 展開
+        view._on_toggle_tree()
+        assert view._tree_expanded is True
+        view._tree_frame.pack.assert_called_once()
+        view._tree_toggle_btn.config.assert_called_with(text="▼ 一覧")
+
+    def test_toggle_summary_collapses_then_expands(self) -> None:
+        """要約を折りたたみ→展開できる."""
+        view = self._make_view()
+
+        view._on_toggle_summary()
+        assert view._summary_expanded is False
+        view._summary_body.pack_forget.assert_called_once()
+        view._summary_toggle_btn.config.assert_called_with(text="▶ 要約")
+
+        view._on_toggle_summary()
+        assert view._summary_expanded is True
+        view._summary_body.pack.assert_called_once()
+        view._summary_toggle_btn.config.assert_called_with(text="▼ 要約")
+
+    def test_toggle_detail_collapses_then_expands(self) -> None:
+        """全文を折りたたみ→展開できる."""
+        view = self._make_view()
+
+        view._on_toggle_detail()
+        assert view._detail_expanded is False
+        view._detail_body.pack_forget.assert_called_once()
+        view._detail_toggle_btn.config.assert_called_with(text="▶ 全文")
+
+        view._on_toggle_detail()
+        assert view._detail_expanded is True
+        view._detail_body.pack.assert_called_once()
+        view._detail_toggle_btn.config.assert_called_with(text="▼ 全文")
+
+    def test_toggles_are_independent(self) -> None:
+        """各領域のトグルは互いに独立している."""
+        view = self._make_view()
+
+        view._on_toggle_summary()
+
+        # 要約だけ折りたたまれ、他は展開のまま
+        assert view._summary_expanded is False
+        assert view._tree_expanded is True
+        assert view._detail_expanded is True
+
+    def test_toggle_persists_state(self) -> None:
+        """トグルのたびに折りたたみ状態が永続化される（次回起動時の記憶）."""
+        view = self._make_view()
+
+        view._on_toggle_tree()
+        view._on_toggle_summary()
+        view._on_toggle_detail()
+
+        # 3回のトグルそれぞれで保存が呼ばれる
+        assert view._persist_collapse_state.call_count == 3
+
+
+class TestApplyCollapseState:
+    """起動時の折りたたみ状態反映のテスト."""
+
+    def _make_view(
+        self, tree: bool, summary: bool, detail: bool
+    ) -> MemoListView:
+        view = object.__new__(MemoListView)
+        view._tree_expanded = tree
+        view._summary_expanded = summary
+        view._detail_expanded = detail
+        view._tree_frame = MagicMock()
+        view._summary_body = MagicMock()
+        view._detail_body = MagicMock()
+        view._tree_toggle_btn = MagicMock()
+        view._summary_toggle_btn = MagicMock()
+        view._detail_toggle_btn = MagicMock()
+        return view
+
+    def test_expanded_state_packs_bodies(self) -> None:
+        """全展開状態では中身が pack され、ラベルは ▼ になる."""
+        view = self._make_view(True, True, True)
+
+        view._apply_collapse_state()
+
+        view._tree_frame.pack.assert_called_once()
+        view._summary_body.pack.assert_called_once()
+        view._detail_body.pack.assert_called_once()
+        view._tree_toggle_btn.config.assert_called_with(text="▼ 一覧")
+        view._summary_toggle_btn.config.assert_called_with(text="▼ 要約")
+        view._detail_toggle_btn.config.assert_called_with(text="▼ 全文")
+
+    def test_collapsed_state_forgets_bodies(self) -> None:
+        """折りたたみ状態では中身が pack_forget され、ラベルは ▶ になる."""
+        view = self._make_view(False, False, False)
+
+        view._apply_collapse_state()
+
+        view._tree_frame.pack_forget.assert_called_once()
+        view._summary_body.pack_forget.assert_called_once()
+        view._detail_body.pack_forget.assert_called_once()
+        view._tree_toggle_btn.config.assert_called_with(text="▶ 一覧")
+        view._summary_toggle_btn.config.assert_called_with(text="▶ 要約")
+        view._detail_toggle_btn.config.assert_called_with(text="▶ 全文")
+
+    def test_mixed_state(self) -> None:
+        """混在状態（一覧展開・要約折りたたみ・全文展開）が正しく反映される."""
+        view = self._make_view(True, False, True)
+
+        view._apply_collapse_state()
+
+        view._tree_frame.pack.assert_called_once()
+        view._summary_body.pack_forget.assert_called_once()
+        view._detail_body.pack.assert_called_once()
