@@ -76,21 +76,30 @@ class MemoListView:
         self._total_pages = 1
         self._memos: list[Memo] = []
 
-        # 各領域の折りたたみ状態（True=展開, False=折りたたみ）。
-        # 前回終了時の状態を app_settings.json から復元する。
+        # 折りたたみ状態（True=展開, False=折りたたみ）。
+        # 一覧・要約・全文の 3 領域を 1 つのトグルでまとめて開閉するため、
+        # 状態は単一フラグ _all_expanded で管理する。
+        # 前回終了時の状態を app_settings.json から復元する。3 領域が
+        # すべて展開のときのみ「展開」とみなし、いずれかが折りたたみなら
+        # 「折りたたみ」として復元する（旧バージョンの個別状態との後方互換）。
         # 読み込みに失敗しても起動を妨げないよう、失敗時は全展開にフォールバックする。
         try:
             from screen_audio_recorder.app_settings_store import load_app_settings
 
             settings = load_app_settings()
-            self._tree_expanded = settings.memo_tree_expanded
-            self._summary_expanded = settings.memo_summary_expanded
-            self._detail_expanded = settings.memo_detail_expanded
+            self._all_expanded = (
+                settings.memo_tree_expanded
+                and settings.memo_summary_expanded
+                and settings.memo_detail_expanded
+            )
         except Exception:
             logger.debug("メモ領域の折りたたみ状態の読み込みに失敗しました。全展開で表示します。")
-            self._tree_expanded = True
-            self._summary_expanded = True
-            self._detail_expanded = True
+            self._all_expanded = True
+
+        # 個別領域フラグは統合状態に同期させる（内部の表示反映で使用）。
+        self._tree_expanded = self._all_expanded
+        self._summary_expanded = self._all_expanded
+        self._detail_expanded = self._all_expanded
 
         self.frame = ttk.LabelFrame(parent, text="メモ一覧", padding=6)
         self._build_ui()
@@ -145,26 +154,34 @@ class MemoListView:
         style.configure("MemoList.Treeview", rowheight=28, font=("", 10))
         style.configure("MemoList.Treeview.Heading", font=("", 10, "bold"))
 
+        # --- 折りたたみトグル（一覧・要約・全文をまとめて開閉する単一ボタン）---
+        # 3領域それぞれのボタンを廃止し、この 1 つのボタンで全体を開閉する。
+        toggle_bar = ttk.Frame(self.frame)
+        toggle_bar.pack(fill=tk.X, pady=(0, 4))
+        self._toggle_btn = ttk.Button(
+            toggle_bar,
+            text="▼ メモ表示",
+            width=12,
+            command=self._on_toggle_all,
+        )
+        self._toggle_btn.pack(side=tk.LEFT)
+
         # --- 2ペイン横並び（PanedWindow HORIZONTAL）---
         paned = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
+        # 折りたたみ時に左右ペインをまとめて隠すため参照を保持する。
+        self._paned = paned
 
         # ==============================================================
         # 左ペイン: メモ一覧 + ページネーション + 操作ボタン
         # ==============================================================
         left_frame = ttk.Frame(paned)
 
-        # --- メモ一覧（折りたたみ可能）---
-        # 折りたたみ用トグルボタン付きヘッダ
+        # --- メモ一覧（統合トグルでまとめて開閉）---
+        # セクション見出し（ラベル）。開閉は上部の統合トグルボタンで行う。
         tree_header = ttk.Frame(left_frame)
         tree_header.pack(fill=tk.X)
-        self._tree_toggle_btn = ttk.Button(
-            tree_header,
-            text="▼ 一覧",
-            width=8,
-            command=self._on_toggle_tree,
-        )
-        self._tree_toggle_btn.pack(side=tk.LEFT)
+        ttk.Label(tree_header, text="一覧").pack(side=tk.LEFT)
 
         # 折りたたみ対象の中身コンテナ
         tree_frame = ttk.Frame(left_frame)
@@ -178,6 +195,9 @@ class MemoListView:
             show="headings",
             selectmode="browse",
             style="MemoList.Treeview",
+            # 初期の要求高さを抑えてウィンドウをコンパクトにする。
+            # 展開時は expand=True で伸び、件数が多い場合はスクロールする。
+            height=6,
         )
 
         # カラムヘッダー設定（コンパクト: 日時+テーマのみ）
@@ -265,35 +285,37 @@ class MemoListView:
         # ==============================================================
         right_frame = ttk.Frame(paned)
 
-        # 右ペイン内を縦に分割
-        right_paned = ttk.PanedWindow(right_frame, orient=tk.VERTICAL)
-        right_paned.pack(fill=tk.BOTH, expand=True)
+        # 右ペインは「要約セクション」「全文セクション」を上から縦に pack する。
+        # 各セクションは [ヘッダ(トグルボタン) + 本文] で構成する。
+        #
+        # PanedWindow をやめて pack ベースにした理由:
+        #   PanedWindow は管理下のペインへ weight で高さを配分するため、
+        #   本文を隠してもペイン枠が高さを確保し、折りたたんでも余白が残った。
+        #   pack なら、折りたたみ時に本文を pack_forget するだけで
+        #   その領域が完全に消え、ヘッダだけが残る。
+        #
+        # right_frame のレイアウト（上から）:
+        #   [要約ヘッダ]（常時）
+        #   [要約本文]  （展開時のみ／展開中は expand で伸縮）
+        #   [全文ヘッダ]（常時）
+        #   [全文本文]  （展開時のみ／展開中は expand で伸縮）
 
-        # --- 要約ペイン（折りたたみ可能）---
-        summary_frame = ttk.Frame(right_paned)
-        self._summary_frame = summary_frame
-
-        # 折りたたみ用トグルボタン付きヘッダ
-        summary_header = ttk.Frame(summary_frame)
+        # --- 要約セクション ---
+        summary_header = ttk.Frame(right_frame)
         summary_header.pack(fill=tk.X)
-        self._summary_toggle_btn = ttk.Button(
-            summary_header,
-            text="▼ 要約",
-            width=8,
-            command=self._on_toggle_summary,
-        )
-        self._summary_toggle_btn.pack(side=tk.LEFT)
+        ttk.Label(summary_header, text="要約").pack(side=tk.LEFT)
 
-        # 折りたたみ対象の中身コンテナ
-        summary_body = ttk.Frame(summary_frame)
-        summary_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        summary_body = ttk.Frame(right_frame)
         self._summary_body = summary_body
+        # 互換のため body を frame としても参照できるようにする。
+        self._summary_frame = summary_body
 
         self._summary_text = tk.Text(
             summary_body,
             wrap=tk.WORD,
             state=tk.DISABLED,
             background="#f5f5f5",
+            height=6,
         )
         summary_scroll = ttk.Scrollbar(
             summary_body, orient=tk.VERTICAL, command=self._summary_text.yview
@@ -302,32 +324,20 @@ class MemoListView:
         self._summary_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         summary_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        right_paned.add(summary_frame, weight=1)
-
-        # --- 全文ペイン（折りたたみ可能）---
-        detail_frame = ttk.Frame(right_paned)
-        self._detail_frame = detail_frame
-
-        # 折りたたみ用トグルボタン付きヘッダ
-        detail_header = ttk.Frame(detail_frame)
+        # --- 全文セクション ---
+        detail_header = ttk.Frame(right_frame)
         detail_header.pack(fill=tk.X)
-        self._detail_toggle_btn = ttk.Button(
-            detail_header,
-            text="▼ 全文",
-            width=8,
-            command=self._on_toggle_detail,
-        )
-        self._detail_toggle_btn.pack(side=tk.LEFT)
+        ttk.Label(detail_header, text="全文").pack(side=tk.LEFT)
 
-        # 折りたたみ対象の中身コンテナ
-        detail_body = ttk.Frame(detail_frame)
-        detail_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        detail_body = ttk.Frame(right_frame)
         self._detail_body = detail_body
+        self._detail_frame = detail_body
 
         self._detail_text = tk.Text(
             detail_body,
             wrap=tk.WORD,
             state=tk.DISABLED,
+            height=8,
         )
         detail_scroll = ttk.Scrollbar(
             detail_body, orient=tk.VERTICAL, command=self._detail_text.yview
@@ -336,7 +346,12 @@ class MemoListView:
         self._detail_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         detail_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        right_paned.add(detail_frame, weight=2)
+        # 各ヘッダ／本文への参照を、再配置（_reflow_right_sections）で使う。
+        self._summary_header = summary_header
+        self._detail_header = detail_header
+
+        # 初期の表示状態は _apply_collapse_state で反映する。
+        # （ここでは本文を pack しない。展開状態に応じて後から pack される）
 
         paned.add(right_frame, weight=2)
 
@@ -387,37 +402,90 @@ class MemoListView:
     # ------------------------------------------------------------------
 
     def _apply_tree_visibility(self) -> None:
-        """メモ一覧領域の表示状態を現在のフラグに合わせて反映する."""
+        """メモ一覧領域の表示状態を現在のフラグに合わせて反映する.
+
+        開閉は統合トグルボタンで行うため、ここでは本文の表示のみ切り替える。
+        """
         if self._tree_expanded:
             self._tree_frame.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-            self._tree_toggle_btn.config(text="▼ 一覧")
         else:
             self._tree_frame.pack_forget()
-            self._tree_toggle_btn.config(text="▶ 一覧")
 
     def _apply_summary_visibility(self) -> None:
-        """要約領域の表示状態を現在のフラグに合わせて反映する."""
-        if self._summary_expanded:
-            self._summary_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-            self._summary_toggle_btn.config(text="▼ 要約")
-        else:
-            self._summary_body.pack_forget()
-            self._summary_toggle_btn.config(text="▶ 要約")
+        """要約領域の表示状態を現在のフラグに合わせて反映する.
+
+        本文の表示／非表示を ``_reflow_right_sections`` にまとめて委ねる。
+        """
+        self._reflow_right_sections()
 
     def _apply_detail_visibility(self) -> None:
-        """全文領域の表示状態を現在のフラグに合わせて反映する."""
-        if self._detail_expanded:
-            self._detail_body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-            self._detail_toggle_btn.config(text="▼ 全文")
-        else:
+        """全文領域の表示状態を現在のフラグに合わせて反映する.
+
+        本文の表示／非表示を ``_reflow_right_sections`` にまとめて委ねる。
+        """
+        self._reflow_right_sections()
+
+    def _reflow_right_sections(self) -> None:
+        """要約・全文の本文を現在の展開状態に合わせて右ペインへ再配置する.
+
+        ヘッダ（トグルボタン）は常時 pack されており、本文だけを
+        pack / pack_forget する。折りたたむと本文の領域が完全に消えるため、
+        ``_shrink_window_to_fit`` と組み合わせてウィンドウが縮む。
+
+        本文を pack し直すときは ``after=`` で対応するヘッダの直後に
+        差し込み、[要約ヘッダ→要約本文→全文ヘッダ→全文本文] の並び順を保つ。
+
+        展開中の本文は ``expand=True`` で伸縮させる。ただし要約・全文が
+        両方展開のときは全文側に多めのスペースを与えたいので、
+        全文本文のみ ``expand=True`` とし、要約本文は自然高（expand=False）で
+        表示する。要約のみ展開の場合は要約側を伸縮させる。
+        """
+        try:
+            # いったん本文を両方畳んでから、展開中のものを正しい位置へ戻す。
+            self._summary_body.pack_forget()
             self._detail_body.pack_forget()
-            self._detail_toggle_btn.config(text="▶ 全文")
+
+            if self._summary_expanded:
+                # 全文も展開しているときは要約を自然高に抑え、
+                # 要約のみ展開のときは要約を伸縮させる。
+                summary_expand = not self._detail_expanded
+                self._summary_body.pack(
+                    after=self._summary_header,
+                    fill=tk.BOTH,
+                    expand=summary_expand,
+                    pady=(2, 0),
+                )
+            if self._detail_expanded:
+                self._detail_body.pack(
+                    after=self._detail_header,
+                    fill=tk.BOTH,
+                    expand=True,
+                    pady=(2, 0),
+                )
+        except Exception:
+            logger.debug("右ペインの再配置に失敗しました。")
 
     def _apply_collapse_state(self) -> None:
-        """起動時に3領域の折りたたみ状態を初期表示へ反映する."""
-        self._apply_tree_visibility()
-        self._apply_summary_visibility()
-        self._apply_detail_visibility()
+        """折りたたみ状態を表示と統合トグルのラベルへ反映する.
+
+        折りたたみ時は左右ペイン（見出し・一覧・ページネーション・操作ボタン・
+        要約・全文）をまとめて隠し、統合トグルボタンだけを残す。展開時は
+        ペインを再表示し、内部の各領域の本文レイアウトを反映する。
+        """
+        # 統合ボタンのラベル（展開なら ▼、折りたたみなら ▶）
+        self._toggle_btn.config(
+            text="▼ メモ表示" if self._all_expanded else "▶ メモ表示"
+        )
+
+        if self._all_expanded:
+            # ペイン全体を表示してから内部の各領域を反映する。
+            self._paned.pack(fill=tk.BOTH, expand=True)
+            self._apply_tree_visibility()
+            self._apply_summary_visibility()
+            self._apply_detail_visibility()
+        else:
+            # ペイン全体を隠す（中の見出し・ボタン類もまとめて非表示になる）。
+            self._paned.pack_forget()
 
     def _persist_collapse_state(self) -> None:
         """現在の折りたたみ状態を app_settings.json に保存する.
@@ -432,30 +500,66 @@ class MemoListView:
             )
 
             settings = load_app_settings()
-            settings.memo_tree_expanded = self._tree_expanded
-            settings.memo_summary_expanded = self._summary_expanded
-            settings.memo_detail_expanded = self._detail_expanded
+            # 3 領域は統合トグルで一括開閉するため、同一の値を保存する
+            # （設定スキーマは変更せず、後方互換を保つ）。
+            settings.memo_tree_expanded = self._all_expanded
+            settings.memo_summary_expanded = self._all_expanded
+            settings.memo_detail_expanded = self._all_expanded
             save_app_settings(settings)
         except Exception:
             logger.debug("メモ領域の折りたたみ状態の保存に失敗しました。")
 
-    def _on_toggle_tree(self) -> None:
-        """メモ一覧領域の折りたたみ／展開を切り替える."""
-        self._tree_expanded = not self._tree_expanded
-        self._apply_tree_visibility()
-        self._persist_collapse_state()
+    def _shrink_window_to_fit(self) -> None:
+        """メインウィンドウを現在のコンテンツの要求サイズに合わせて縮小する.
 
-    def _on_toggle_summary(self) -> None:
-        """要約領域の折りたたみ／展開を切り替える."""
-        self._summary_expanded = not self._summary_expanded
-        self._apply_summary_visibility()
-        self._persist_collapse_state()
+        領域を折りたたむと、その分だけウィジェットの要求サイズが小さくなる。
+        ``geometry("")`` を指定すると tkinter がウィンドウサイズをコンテンツの
+        要求サイズにリセットするため、折りたたんだ分だけウィンドウが自動的に
+        縮む（展開時はコンテンツに必要なサイズまで戻る）。
 
-    def _on_toggle_detail(self) -> None:
-        """全文領域の折りたたみ／展開を切り替える."""
-        self._detail_expanded = not self._detail_expanded
-        self._apply_detail_visibility()
+        ただしルートウィンドウには最小サイズ（minsize）が設定されており、
+        折りたたんでコンテンツが小さくなっても高さがそこで頭打ちになり
+        下部に余白が残る。これを避けるため、minsize の高さを現在の
+        コンテンツ要求高さへ動的に追従させる（幅の最小値は維持する）。
+
+        ルートウィンドウが未設定の場合や、サイズ変更に失敗した場合でも
+        GUI 操作を妨げないよう、例外は握りつぶす。
+        """
+        if self._root is None:
+            return
+        try:
+            # pack_forget / pack 後のレイアウトを確定させてから要求サイズを取得する。
+            self._root.update_idletasks()
+
+            # 現在の minsize（幅）は維持したまま、高さの最小値だけを
+            # コンテンツ要求高さに合わせて更新する。これにより minsize が
+            # 下限になって余白が残るのを防ぐ。
+            try:
+                min_w, _min_h = self._root.minsize()
+                req_h = self._root.winfo_reqheight()
+                self._root.minsize(min_w, req_h)
+            except Exception:
+                logger.debug("最小サイズ（高さ）の追従に失敗しました。")
+
+            # geometry("") でウィンドウサイズをコンテンツの要求サイズにリセットする。
+            self._root.geometry("")
+            # リセット指示を実際のウィンドウサイズへ反映させるため、
+            # もう一度アイドルタスクを処理する。
+            self._root.update_idletasks()
+        except Exception:
+            logger.debug("メインウィンドウの自動縮小に失敗しました。")
+
+    def _on_toggle_all(self) -> None:
+        """一覧・要約・全文の3領域をまとめて折りたたみ／展開する."""
+        self._all_expanded = not self._all_expanded
+        # 個別フラグを統合状態に同期させる
+        self._tree_expanded = self._all_expanded
+        self._summary_expanded = self._all_expanded
+        self._detail_expanded = self._all_expanded
+
+        self._apply_collapse_state()
         self._persist_collapse_state()
+        self._shrink_window_to_fit()
 
     def _on_select(self, event: tk.Event) -> None:
         """メモ選択イベントハンドラ."""
