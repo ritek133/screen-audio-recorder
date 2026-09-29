@@ -54,16 +54,6 @@ _DOWNLOADABLE_MODELS = [
 # モデル保存先ディレクトリ
 _MODEL_DIR = Path.home() / "Documents" / "screen-audio-recorder" / "models"
 
-# Bedrock で利用可能なモデル一覧
-_BEDROCK_MODELS = [
-    "anthropic.claude-3-haiku-20240307-v1:0",
-    "anthropic.claude-3-sonnet-20240229-v1:0",
-    "anthropic.claude-3-5-sonnet-20240620-v1:0",
-    "anthropic.claude-3-5-haiku-20241022-v1:0",
-    "amazon.titan-text-express-v1",
-    "amazon.titan-text-lite-v1",
-]
-
 # AWS リージョン一覧（Bedrock 対応リージョン）
 _AWS_REGIONS = [
     "us-east-1",
@@ -469,17 +459,16 @@ class LlmSettingsTab:
         ttk.Label(bedrock_row, text="モデル ID:").pack(
             side=tk.LEFT, padx=(0, 6)
         )
-        self._bedrock_model_combo = ttk.Combobox(
+        self._bedrock_model_entry = ttk.Entry(
             bedrock_row,
             textvariable=self._bedrock_model_var,
-            values=_BEDROCK_MODELS,
             width=45,
         )
-        self._bedrock_model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._bedrock_model_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(
             self._bedrock_frame,
             text="※ AWS 設定セクションで認証情報を設定してください\n"
-            "※ モデル ID は手入力も可能です（カスタムモデル等）",
+            "※ モデル ID を直接入力してください（例: 推論プロファイル ARN・カスタムモデル等）",
             foreground="gray",
         ).pack(anchor=tk.W, pady=(4, 0))
 

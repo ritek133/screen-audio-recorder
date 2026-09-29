@@ -234,3 +234,82 @@ class TestComputeChunkCharSize:
 def test_chunk_bounds_are_sane() -> None:
     """チャンクサイズの下限・上限が正で、下限 < 上限であること."""
     assert 0 < _MIN_CHUNK_CHAR_SIZE < _MAX_CHUNK_CHAR_SIZE
+
+
+# ---------------------------------------------------------------------------
+# process(skip_fix_text=...) のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestProcessSkipFixText:
+    """skip_fix_text 指定時にテキスト整形をスキップすることを検証する.
+
+    Amazon Transcribe（SaaS 構成）では文字起こし側で整形済みの結果が得られるため、
+    LLM による二重整形を避けて生テキストをそのまま本文にする。
+    """
+
+    def test_skip_fix_text_uses_raw_text_as_body(self) -> None:
+        """skip_fix_text=True のとき、生テキストがそのまま corrected_text になる."""
+        llm = MagicMock()
+        llm.available = True
+        # 整形が呼ばれたら分かるように、要約・整形で別々の応答を返す
+        llm.generate.return_value = "要約結果。"
+        processor = _make_processor(llm)
+
+        raw_text = "これは 整形されていない 生の文字起こし です"
+        result = processor.process(raw_text, skip_fix_text=True)
+
+        # 本文は生テキストのまま（整形されていない）
+        assert result.corrected_text == raw_text
+
+    def test_skip_fix_text_does_not_call_fix_text(self) -> None:
+        """skip_fix_text=True のとき、_fix_text は呼び出されない."""
+        llm = MagicMock()
+        llm.available = True
+        llm.generate.return_value = "要約結果。"
+        processor = _make_processor(llm)
+        processor._fix_text = MagicMock(  # type: ignore[method-assign]
+            side_effect=AssertionError("_fix_text は呼ばれてはならない")
+        )
+
+        result = processor.process("生テキストです", skip_fix_text=True)
+
+        processor._fix_text.assert_not_called()
+        assert result.corrected_text == "生テキストです"
+
+    def test_skip_fix_text_still_generates_summary_and_theme(self) -> None:
+        """skip_fix_text=True でも要約・テーマ生成は従来どおり実行される."""
+        llm = MagicMock()
+        llm.available = True
+        llm.generate.return_value = "生成結果"
+        processor = _make_processor(llm)
+
+        result = processor.process("生の文字起こしテキストです。", skip_fix_text=True)
+
+        # 要約・テーマは LLM で生成される（空でない）
+        assert result.summary != ""
+        assert result.theme != ""
+
+    def test_default_still_applies_fix_text(self) -> None:
+        """skip_fix_text を指定しない（デフォルト）場合は従来どおり整形される."""
+        llm = MagicMock()
+        llm.available = True
+        llm.generate.return_value = "整形済みテキスト。"
+        processor = _make_processor(llm)
+
+        result = processor.process("元テキスト。")
+
+        # 整形結果が本文に反映される
+        assert result.corrected_text == "整形済みテキスト。"
+
+    def test_skip_fix_text_empty_returns_defaults(self) -> None:
+        """空テキストは skip_fix_text の値に関わらずデフォルト値を返す."""
+        llm = MagicMock()
+        llm.available = True
+        processor = _make_processor(llm)
+
+        result = processor.process("   ", skip_fix_text=True)
+
+        assert result.corrected_text == ""
+        assert result.summary == ""
+        assert result.used_llm is False

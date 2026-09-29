@@ -15,7 +15,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from screen_audio_recorder.models import RecordingMode, RecordingRegion, TranscribeResult
+from screen_audio_recorder.models import (
+    RecordingMode,
+    RecordingRegion,
+    TranscribeResult,
+    TranscriberBackend,
+)
 
 logger = logging.getLogger("screen_audio_recorder")
 
@@ -444,9 +449,16 @@ class RecorderController:
                 # 生データ保存の失敗はメモ保存を妨げない（本文は別途保持される）
                 logger.exception("文字起こし生データの保存に失敗しました。")
 
+        # 文字起こしバックエンドが Amazon Transcribe（SaaS 構成）の場合は、
+        # 文字起こし側で整形済みの結果が得られるため、LLM によるテキスト整形を
+        # スキップして生の文字起こしテキストをそのまま全文（本文）に使用する。
+        skip_fix_text = self._transcriber.backend == TranscriberBackend.AWS_TRANSCRIBE
+
         # TextPostProcessor が利用可能な場合は LLM で後処理
         if self._text_post_processor is not None:
-            post_result = self._text_post_processor.process(text)
+            post_result = self._text_post_processor.process(
+                text, skip_fix_text=skip_fix_text
+            )
             corrected_text = post_result.corrected_text
             summary = post_result.summary
             theme = post_result.theme
