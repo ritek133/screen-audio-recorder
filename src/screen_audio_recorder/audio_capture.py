@@ -450,8 +450,9 @@ class AudioCapture:
                             if rms > 0.0001:
                                 self._sys_rms_sum += rms
                                 self._sys_rms_count += 1
-                            # 1秒ごとに音量ログ
-                            if now - self._sys_volume_log_time >= 1.0:
+                            # 1秒ごとに音量ログ（DEBUG 有効時のみ。log10 計算もスキップ）
+                            if (logger.isEnabledFor(logging.DEBUG)
+                                    and now - self._sys_volume_log_time >= 1.0):
                                 self._sys_volume_log_time = now
                                 logger.debug("[音量] システム音声 RMS: %.6f (dB: %.1f)",
                                             rms, 20 * np.log10(rms + 1e-10))
@@ -711,9 +712,10 @@ class AudioCapture:
                         if rms > 0.0001:  # 無音でないチャンクのみ集計
                             self._mic_rms_sum += rms
                             self._mic_rms_count += 1
-                        # 1秒ごとに音量(RMS)をログ出力
+                        # 1秒ごとに音量(RMS)をログ出力（DEBUG 有効時のみ。log10 計算もスキップ）
                         now = time.perf_counter()
-                        if now - self._mic_volume_log_time >= 1.0:
+                        if (logger.isEnabledFor(logging.DEBUG)
+                                and now - self._mic_volume_log_time >= 1.0):
                             self._mic_volume_log_time = now
                             logger.debug("[音量] マイク RMS: %.6f (dB: %.1f)", rms, 20 * np.log10(rms + 1e-10))
                     return (None, pyaudio.paContinue)
