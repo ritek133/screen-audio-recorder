@@ -334,23 +334,52 @@ Resources:
   # 注: Period を 86400 秒（1 日）とし、日次上限の安全弁とする。
   #     残量表示に用いる厳密な当日累計は、使用量集約 Lambda (UsageAggregatorFunction) が
   #     GetMetricData の StartTime を「当日 00:00 UTC」に指定して算出する。
+  #
+  # AWS/Bedrock の InputTokenCount / OutputTokenCount は ModelId ディメンションで
+  # 発行される。Application Inference Profile 経由の場合、ModelId の値はプロファイル
+  # ID（InferenceProfileArn の末尾 = InferenceProfileId）と一致する。
+  # 以前は存在しない InferenceProfileArn ディメンションを指定していたため、
+  # メトリクスに一致せず使用量が常に 0 と評価されていた（残量が満タン固定）。
+  # 日次上限は入力・出力を合算した総トークン数に対して適用するため、
+  # metric math（e1 = m1 + m2）で入力・出力を合算した値をしきい値評価する。
   BedrockInvocationAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: ShouldEnableUsageGuard
     Properties:
       AlarmName: !Sub "${ProjectName}-${UserName}-token-limit"
-      AlarmDescription: !Sub "${UserName} の Bedrock トークン使用量が日次上限を超過"
-      Namespace: AWS/Bedrock
-      MetricName: InputTokenCount
-      Dimensions:
-        - Name: InferenceProfileArn
-          Value: !GetAtt InferenceProfile.InferenceProfileArn
-      Statistic: Sum
-      Period: 86400
+      AlarmDescription: !Sub "${UserName} の Bedrock トークン使用量（入力+出力）が日次上限を超過"
       EvaluationPeriods: 1
       Threshold: !Ref DailyTokenLimit
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      Metrics:
+        # e1 = 入力トークン + 出力トークン（合算値をしきい値評価する）
+        - Id: e1
+          Expression: "m1 + m2"
+          Label: TotalTokenCount
+          ReturnData: true
+        - Id: m1
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/Bedrock
+              MetricName: InputTokenCount
+              Dimensions:
+                - Name: ModelId
+                  Value: !GetAtt InferenceProfile.InferenceProfileId
+            Period: 86400
+            Stat: Sum
+        - Id: m2
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/Bedrock
+              MetricName: OutputTokenCount
+              Dimensions:
+                - Name: ModelId
+                  Value: !GetAtt InferenceProfile.InferenceProfileId
+            Period: 86400
+            Stat: Sum
       AlarmActions:
         - !Ref UsageGuardTopic
       Tags:
@@ -523,7 +552,10 @@ Resources:
         Variables:
           DAILY_TOKEN_LIMIT: !Ref DailyTokenLimit
           DAILY_TRANSCRIBE_JOB_LIMIT: !Ref DailyTranscribeJobLimit
-          INFERENCE_PROFILE_ARN: !GetAtt InferenceProfile.InferenceProfileArn
+          # AWS/Bedrock InputTokenCount は ModelId ディメンションで発行され、
+          # Application Inference Profile 経由ではその値がプロファイル ID と一致する。
+          # そのため集計には ARN ではなく InferenceProfileId を渡す。
+          INFERENCE_PROFILE_ID: !GetAtt InferenceProfile.InferenceProfileId
           METRIC_NAMESPACE: !Sub "${ProjectName}/TranscribeUsage"
           TRANSCRIBE_METRIC_NAME: !Sub "${UserName}-TranscribeJobCount"
           ENABLE_TRANSCRIBE: !Ref EnableTranscribe
@@ -558,6 +590,11 @@ Resources:
 
           def _sum_metric(namespace, metric_name, dimensions, start, end):
               # 指定メトリクスを当日区間で Sum 集計する。
+              # Period はあえて 300 秒（5 分）粒度にし、返ってきた複数データ
+              # ポイントを合算する。当日全体を 1 バケット（86400 秒）に丸めると、
+              # 当日途中区間では最新の増分が反映されにくく、コンソールのメトリクス
+              # 表示と食い違って見えることがあるため。粒度を下げても Sum の総和は
+              # 変わらず、当日累計を正しく得られる。
               resp = cloudwatch.get_metric_data(
                   MetricDataQueries=[
                       {
@@ -568,8 +605,7 @@ Resources:
                                   "MetricName": metric_name,
                                   "Dimensions": dimensions,
                               },
-                              # 期間全体を 1 データポイントに集約する。
-                              "Period": 86400,
+                              "Period": 300,
                               "Stat": "Sum",
                           },
                           "ReturnData": True,
@@ -589,18 +625,23 @@ Resources:
               reset_at = _next_day_start(now)
 
               token_limit = int(os.environ["DAILY_TOKEN_LIMIT"])
-              inference_profile_arn = os.environ["INFERENCE_PROFILE_ARN"]
+              inference_profile_id = os.environ["INFERENCE_PROFILE_ID"]
 
-              # Bedrock 入力トークン使用量（当日累計）
-              used_tokens = int(
-                  _sum_metric(
-                      "AWS/Bedrock",
-                      "InputTokenCount",
-                      [{"Name": "InferenceProfileArn", "Value": inference_profile_arn}],
-                      start,
-                      end=now,
-                  )
+              # Bedrock トークン使用量（当日累計、入力 + 出力の合算）
+              # AWS/Bedrock の InputTokenCount / OutputTokenCount は ModelId
+              # ディメンションで発行される。Application Inference Profile 経由では
+              # その ModelId 値がプロファイル ID（ARN 末尾）と一致するため、
+              # ModelId ディメンションにプロファイル ID を指定して集計する。
+              # 日次上限（DAILY_TOKEN_LIMIT）は入力・出力を合算した総トークン数に
+              # 対して適用する。
+              dimensions = [{"Name": "ModelId", "Value": inference_profile_id}]
+              used_input_tokens = int(
+                  _sum_metric("AWS/Bedrock", "InputTokenCount", dimensions, start, end=now)
               )
+              used_output_tokens = int(
+                  _sum_metric("AWS/Bedrock", "OutputTokenCount", dimensions, start, end=now)
+              )
+              used_tokens = used_input_tokens + used_output_tokens
               remaining_tokens = max(token_limit - used_tokens, 0)
 
               # Transcribe ジョブ数（有効時のみ。無効時は各項目 null）
@@ -636,8 +677,10 @@ Resources:
 
               # 要約のみログ出力（認証情報・環境変数全体は出力しない）
               logger.info(
-                  "usage summary: tokens used=%s remaining=%s, jobs used=%s remaining=%s",
-                  used_tokens, remaining_tokens, used_jobs, remaining_jobs,
+                  "usage summary: tokens used=%s (in=%s out=%s) remaining=%s, "
+                  "jobs used=%s remaining=%s",
+                  used_tokens, used_input_tokens, used_output_tokens, remaining_tokens,
+                  used_jobs, remaining_jobs,
               )
 
               return {
